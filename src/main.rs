@@ -8,7 +8,7 @@ use image::{
 };
 
 use winit::{
-    dpi::{LogicalSize, PhysicalSize, Size}, event::*, event_loop::{EventLoop, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, window::WindowBuilder
+    dpi::{LogicalSize, PhysicalSize, Size}, event::*, event_loop::{EventLoop, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, monitor::VideoMode, window::WindowBuilder
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -20,7 +20,17 @@ impl Timer {
         duration
     }
 
-    fn framerate(self) -> f64 {
+    fn split_time(&mut self) -> Self {
+        let old = *self;
+        self.0 = Instant::now();
+        old
+    }
+
+    fn elapsed(&self) -> Duration {
+        self.0.elapsed()
+    }
+
+    fn framerate(&self) -> f64 {
         1.0 / self.0.elapsed().as_secs_f64()
     }
 
@@ -33,7 +43,12 @@ impl Timer {
 pub async fn run() {
     env_logger::init();
     let event_loop = EventLoop::new().unwrap();
-    let window = WindowBuilder::new().with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0))).build(&event_loop).unwrap();
+    let window = WindowBuilder::new()
+        // .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
+        .with_title("WGPU Sandbox")
+        .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
+        .with_content_protected(true)
+        .build(&event_loop).unwrap();
 
     let mut state = State::new(&window).await;
     let monitor = state.window().current_monitor().unwrap();
@@ -42,6 +57,7 @@ pub async fn run() {
     }
     let mut timer = Timer(Instant::now());
     let mut wait_timer = Timer(Instant::now());
+    let mut frame_counter = 0u64;
     event_loop.run(move |event, control_flow| match event {
         Event::WindowEvent {
             ref event,
@@ -58,9 +74,9 @@ pub async fn run() {
                             ..
                         },
                     ..
-                } => control_flow.exit(),
+                } if state.close_requested() => control_flow.exit(),
                 WindowEvent::Focused(focus) => {
-                    println!("Focus: {focus}");
+                    state.focus_changed(*focus);
                 }
                 WindowEvent::Resized(physical_size) => {
                     state.resize(*physical_size);
@@ -69,9 +85,9 @@ pub async fn run() {
                     let old = timer;
                     // timer.wait(Duration::from_secs(1)/60);
                     let time = timer.time();
-                    println!("Framerate: {}", old.framerate());
-                    state.update();
-                    match state.render() {
+                    // println!("Framerate: {}", old.framerate());
+                    state.update(frame_counter);
+                    match state.render(frame_counter) {
                         Ok(_) => {},
                         Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
                         Err(wgpu::SurfaceError::OutOfMemory) => {
@@ -83,6 +99,7 @@ pub async fn run() {
                         }
                         Err(e) => eprintln!("{e:?}"),
                     }
+                    frame_counter += 1;
                 }
                 _ => {}
             }
@@ -90,7 +107,7 @@ pub async fn run() {
         Event::AboutToWait => {
             let wait = wait_timer;
             wait_timer.time();
-            println!("Wait FPS: {}", wait.framerate());
+            // println!("Wait FPS: {}", wait.framerate());
             state.window().request_redraw();
         }
         _ => {}
