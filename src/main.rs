@@ -8,7 +8,7 @@ use image::{
 };
 
 use winit::{
-    dpi::{LogicalSize, PhysicalSize, Size}, event::*, event_loop::{EventLoop, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, monitor::VideoMode, window::WindowBuilder
+    dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Size}, event::*, event_loop::{EventLoop, EventLoopWindowTarget}, keyboard::{KeyCode, PhysicalKey}, monitor::VideoMode, window::WindowBuilder
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -44,11 +44,13 @@ pub async fn run() {
     env_logger::init();
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
-        // .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
+        .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
         .with_title("WGPU Sandbox")
-        .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
-        .with_content_protected(true)
+        // .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
+        // .with_content_protected(true)
         .build(&event_loop).unwrap();
+
+    // window.set_cursor_visible(false);
 
     let mut state = State::new(&window).await;
     let monitor = state.window().current_monitor().unwrap();
@@ -58,59 +60,64 @@ pub async fn run() {
     let mut timer = Timer(Instant::now());
     let mut wait_timer = Timer(Instant::now());
     let mut frame_counter = 0u64;
-    event_loop.run(move |event, control_flow| match event {
-        Event::WindowEvent {
-            ref event,
-            window_id,
-        } if window_id == state.window.id() => if !state.input(event) {
-            match event {
-                WindowEvent::CloseRequested
-                | WindowEvent::KeyboardInput {
-                    event:
-                        // Escape key pressed
-                        KeyEvent {
-                            state: ElementState::Pressed,
-                            physical_key: PhysicalKey::Code(KeyCode::Escape),
-                            ..
-                        },
-                    ..
-                } if state.close_requested() => control_flow.exit(),
-                WindowEvent::Focused(focus) => {
-                    state.focus_changed(*focus);
-                }
-                WindowEvent::Resized(physical_size) => {
-                    state.resize(*physical_size);
-                }
-                WindowEvent::RedrawRequested => {
-                    let old = timer;
-                    // timer.wait(Duration::from_secs(1)/60);
-                    let time = timer.time();
-                    // println!("Framerate: {}", old.framerate());
-                    state.update(frame_counter);
-                    match state.render(frame_counter) {
-                        Ok(_) => {},
-                        Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
-                        Err(wgpu::SurfaceError::OutOfMemory) => {
-                            log::error!("OutOfMemory");
-                            control_flow.exit()
-                        },
-                        Err(wgpu::SurfaceError::Timeout) => {
-                            log::warn!("Surface timeout");
-                        }
-                        Err(e) => eprintln!("{e:?}"),
+    event_loop.run(move |event, control_flow| {
+        state.process_event(&event);
+        match event {
+            Event::WindowEvent {
+                ref event,
+                window_id,
+            } if window_id == state.window.id() => if !state.process_window_event(event) {
+                match event {
+                    WindowEvent::CloseRequested
+                    | WindowEvent::KeyboardInput {
+                        event:
+                            // Escape key pressed
+                            KeyEvent {
+                                state: ElementState::Pressed,
+                                physical_key: PhysicalKey::Code(KeyCode::Escape),
+                                ..
+                            },
+                        ..
+                    } if state.close_requested() => control_flow.exit(),
+                    WindowEvent::Focused(focus) => {
+                        state.focus_changed(*focus);
                     }
-                    frame_counter += 1;
+                    WindowEvent::Resized(physical_size) => {
+                        state.resize(*physical_size);
+                    }
+                    WindowEvent::RedrawRequested => {
+                        state.begin_frame(frame_counter);
+                        let old = timer;
+                        // timer.wait(Duration::from_secs(1)/60);
+                        let time = timer.time();
+                        // println!("Framerate: {}", old.framerate());
+                        state.update(frame_counter);
+                        match state.render(frame_counter) {
+                            Ok(_) => {},
+                            Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
+                            Err(wgpu::SurfaceError::OutOfMemory) => {
+                                log::error!("OutOfMemory");
+                                control_flow.exit()
+                            },
+                            Err(wgpu::SurfaceError::Timeout) => {
+                                log::warn!("Surface timeout");
+                            }
+                            Err(e) => eprintln!("{e:?}"),
+                        }
+                        state.end_frame(frame_counter);
+                        frame_counter += 1;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
+            Event::AboutToWait => {
+                let wait = wait_timer;
+                wait_timer.time();
+                // println!("Wait FPS: {}", wait.framerate());
+                state.window().request_redraw();
+            }
+            _ => {}
         }
-        Event::AboutToWait => {
-            let wait = wait_timer;
-            wait_timer.time();
-            // println!("Wait FPS: {}", wait.framerate());
-            state.window().request_redraw();
-        }
-        _ => {}
     });
 }
 

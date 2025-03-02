@@ -24,6 +24,7 @@ impl PressState {
 pub struct MousePosState {
     pub previous: PhysicalPosition<f64>,
     pub current: PhysicalPosition<f64>,
+    pub delta: PhysicalPosition<f64>,
 }
 
 impl MousePosState {
@@ -31,6 +32,7 @@ impl MousePosState {
         Self {
             previous: PhysicalPosition::new(0., 0.),
             current: PhysicalPosition::new(0., 0.),
+            delta: PhysicalPosition::new(0., 0.),
         }
     }
 
@@ -112,5 +114,6 @@ impl Input {
         self.key_states.iter_mut().for_each(|(_, state)| state.push_back());
         self.mouse_states.iter_mut().for_each(|(_, state)| state.push_back());
         self.mouse_pos.push_back();
+        self.mouse_pos.delta = PhysicalPosition::new(0., 0.);
     }
 }

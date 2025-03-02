@@ -1,6 +1,8 @@
 use glam::{
-    vec2, Mat4, Quat, Vec2, Vec3
+    vec2, Mat4, Quat, Vec2, Vec3, Vec4, Vec4Swizzles
 };
+
+use crate::math::ray::Ray3;
 
 pub fn rotation_from_look_at(position: Vec3, target: Vec3) -> Vec2 {
     let dir = (target - position).normalize();
@@ -97,6 +99,35 @@ impl Camera {
         }
     }
 
+    pub fn rotate_vec(&self, v: Vec3) -> Vec3 {
+        let rot = self.quat();
+        rot * v
+    }
+
+    pub fn up(&self) -> Vec3 {
+        self.rotate_vec(Vec3::Y)
+    }
+
+    pub fn down(&self) -> Vec3 {
+        self.rotate_vec(Vec3::NEG_Y)
+    }
+
+    pub fn left(&self) -> Vec3 {
+        self.rotate_vec(Vec3::NEG_X)
+    }
+
+    pub fn right(&self) -> Vec3 {
+        self.rotate_vec(Vec3::X)
+    }
+
+    pub fn forward(&self) -> Vec3 {
+        self.rotate_vec(Vec3::NEG_Z)
+    }
+
+    pub fn backward(&self) -> Vec3 {
+        self.rotate_vec(Vec3::Z)
+    }
+
     pub fn translate(&mut self, offset: Vec3) {
         self.position += offset;
     }
@@ -146,8 +177,32 @@ impl Camera {
         Mat4::perspective_rh(self.fov, self.aspect_ratio, self.z_near, self.z_far)
     }
 
-    pub fn view_projection_matrix(&self) -> Mat4 {
+    pub fn projection_view_matrix(&self) -> Mat4 {
         self.projection_matrix() * self.view_matrix()
+    }
+
+    pub fn world_to_clip(&self, pos: Vec3) -> Vec4 {
+        let view_proj = self.projection_view_matrix();
+        let pos_w = Vec4::new(pos.x, pos.y, pos.z, 1.0);
+        view_proj * pos_w
+    }
+
+    pub fn world_to_clip_ncd(&self, pos: Vec3) -> Vec3 {
+        let clip = self.world_to_clip(pos);
+        clip.xyz() / clip.w
+    }
+    
+    pub fn normalized_screen_to_ray(&self, screen_pos: Vec2) -> Ray3 {
+        let inv_proj_view = self.projection_view_matrix().inverse();
+
+        let near_point = inv_proj_view * Vec4::new(screen_pos.x, -screen_pos.y, 0.0, 1.0);
+        let near_point = near_point.xyz() / near_point.w;
+        let far_point = inv_proj_view * Vec4::new(screen_pos.x, -screen_pos.y, self.z_far, 1.0);
+        let far_point = far_point.xyz() / far_point.w;
+
+        let direction = (near_point - far_point).normalize();
+
+        Ray3::new(self.position, direction)
     }
 }
 

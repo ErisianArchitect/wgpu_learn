@@ -2,7 +2,8 @@
 use glam::{vec2, vec3, Vec3};
 use wgpu::ShaderStages;
 use wgpu::{self, util::DeviceExt};
-use winit::event::MouseButton;
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::event::{DeviceEvent, Event, MouseButton};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::{event::WindowEvent, window::Window};
 
@@ -103,7 +104,8 @@ impl<'a> State<'a> {
                 cube_sides_dir.join("neg_y.png"),
                 cube_sides_dir.join("neg_z.png"),
                 cube_sides_dir.join("pos_x.png"),
-                cube_sides_dir.join("pos_y.png"),
+                cube_sides_dir.join("stone_bricks.png"),
+                // cube_sides_dir.join("pos_y.png"),
                 cube_sides_dir.join("pos_z.png"),
             ],
             Some("Debug Texture Array"),
@@ -115,7 +117,7 @@ impl<'a> State<'a> {
         let transforms = TransformsBindGroup::new(&device);
         // Camera
         let camera = Camera::from_look_at(Vec3::new(0.0, 1.0, 0.0), Vec3::NEG_Z, 45f32.to_radians(), aspect_ratio, 0.01, 1000.0);
-        let view_proj_matrix = camera.view_projection_matrix();
+        let view_proj_matrix = camera.projection_view_matrix();
         // transforms.write_world(&queue, &glam::Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::IDENTITY, Vec3::ZERO));
         transforms.write_view_projection(&queue, &view_proj_matrix);
         // Surface Caps/Format
@@ -220,6 +222,13 @@ impl<'a> State<'a> {
         }
     }
 
+    pub fn window_center(&self) -> PhysicalPosition<f64> {
+        PhysicalPosition::new(
+            self.size.width as f64 / 2.0,
+            self.size.height as f64 / 2.0,
+        )
+    }
+
     pub fn window(&self) -> &Window {
         &self.window
     }
@@ -244,7 +253,22 @@ impl<'a> State<'a> {
         true
     }
 
-    pub fn input(&mut self, _event: &WindowEvent) -> bool {
+    pub fn process_event(&mut self, event: &Event<()>) {
+        match event {
+            Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } => {
+                self.input.mouse_pos.delta.x += delta.0;
+                self.input.mouse_pos.delta.y += delta.1;
+                // self.window.set_cursor_position(self.window_center()).unwrap();
+                // const MOUSE_SENSITIVITY: f64 = 0.00075;
+                // let rot_y = -(delta.0 * MOUSE_SENSITIVITY);
+                // let rot_x = -(delta.1 * MOUSE_SENSITIVITY);
+                // self.camera.rotate(vec2(rot_x as f32, rot_y as f32));
+            }
+            _ => (),
+        }
+    }
+
+    pub fn process_window_event(&mut self, _event: &WindowEvent) -> bool {
         match _event {
             WindowEvent::MouseInput { state, button, .. } => {
                 self.input.set_mouse_state(*button, state.is_pressed());
@@ -287,7 +311,26 @@ impl<'a> State<'a> {
         false
     }
 
-    pub fn update_begin(&mut self) {
+    pub fn begin_frame(&mut self, _frame_index: u64) {
+
+    }
+
+    pub fn end_frame(&mut self, _frame_index: u64) {
+        // let w = self.size.width as f64;
+        // let h = self.size.height as f64;
+        // let mid_x = w * 0.5;
+        // let mid_y = h * 0.5;
+        // let mid_pos = PhysicalPosition::new(mid_x, mid_y);
+        // self.input.mouse_pos.current = mid_pos;
+        // self.window.set_cursor_position(mid_pos).unwrap();
+        self.input.push_back();
+    }
+
+    pub fn begin_update(&mut self, _frame_index: u64) {
+
+    }
+
+    pub fn end_update(&mut self, _frame_index: u64) {
 
     }
 
@@ -296,8 +339,17 @@ impl<'a> State<'a> {
         let elapsed = self.last_time.elapsed();
         let t = elapsed.as_secs_f32();
 
-        let rot = -15f32.to_radians() * t;
-        self.camera.rotate(vec2(0.0, rot));
+        if self.input.key_just_pressed(KeyCode::F11) {
+            // self.window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+            if let Some(_) = self.window.fullscreen() {
+                self.window.set_fullscreen(None);
+            } else {
+                self.window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+            }
+        }
+
+        // let rot = -15f32.to_radians() * t;
+        // self.camera.rotate(vec2(0.0, rot));
 
         if self.input.key_just_pressed(KeyCode::Digit1) {
             self.camera.look_at(Vertex::PLANE_VERTICES[0].position);
@@ -313,12 +365,6 @@ impl<'a> State<'a> {
         }
         if self.input.key_pressed(KeyCode::Digit5) {
             self.camera.look_at(Vec3::X);
-        }
-        if self.input.mouse_pressed(MouseButton::Left) {
-            println!("Left {frame_index}");
-        }
-        if self.input.mouse_just_pressed(MouseButton::Right) {
-            println!("Right");
         }
 
         let mut total_movement = Vec3::ZERO;
@@ -364,31 +410,73 @@ impl<'a> State<'a> {
         if moved {
             self.camera.translate_rotated(total_movement * t);
         }
+        
+        let mouse_pos = self.input.mouse_pos.current;
+        let screen_pos = vec2(
+            ((mouse_pos.x / self.size.width as f64) * 2.0 - 1.0) as f32,
+            ((mouse_pos.y / self.size.height as f64) * 2.0 - 1.0) as f32,
+        );
+        let ray = self.camera.normalized_screen_to_ray(screen_pos);
+
+        if self.input.key_just_pressed(KeyCode::KeyB) {
+            println!("{:.5}, {:.5}", ray.dir.length(), ray.invert_dir().dir.length());
+        }
+
+        if self.input.mouse_pressed(MouseButton::Left) {
+            // let new_pos = ray.point_on_ray(t);
+            // self.camera.position = new_pos;
+            self.camera.position = ray.point_on_ray(t * 0.25);
+        }
+        if self.input.mouse_pressed(MouseButton::Right) {
+            // let ray = ray.invert_dir();
+            // let new_pos = ray.point_on_ray(t);
+            self.camera.position = ray.point_on_ray(-t * 0.25);
+        }
+
+        // Mouse Move
+
+        const MOUSE_SENSITIVITY: f64 = 0.00075;
+
+        if self.input.mouse_just_pressed(MouseButton::Middle) {
+            self.window.set_cursor_visible(false);
+        }
+        if self.input.mouse_just_released(MouseButton::Middle) {
+            self.window.set_cursor_visible(true);
+        }
+
+        if self.input.mouse_pressed(MouseButton::Middle) {
+            let rot_y = -(self.input.mouse_pos.delta.x * MOUSE_SENSITIVITY);
+            let rot_x = -(self.input.mouse_pos.delta.y * MOUSE_SENSITIVITY);
+    
+            self.camera.rotate(vec2(rot_x as f32, rot_y as f32));
+            self.window.set_cursor_position(self.window_center()).unwrap();
+        }
 
         if self.input.key_just_pressed(KeyCode::KeyT) {
             println!("FPS: {:.0}, FI: {frame_index}", 1.0 / t);
             println!("Rotation: {:.0}", self.camera.rotation.y.to_degrees());
         }
+        // const MOUSE_SENSITIVITY: f32 = 0.05;
+        // let mouse_offset = self.input.mouse_offset();
+        // let mx = (mouse_offset.x as f32 * MOUSE_SENSITIVITY) * t;
+        // let my = (mouse_offset.y as f32 * MOUSE_SENSITIVITY) * t;
+
+        // self.camera.rotate(vec2(-my, -mx));
 
         if frame_index % 60 == 0 {
             println!("Frame: {frame_index}");
         }
 
         self.last_time = std::time::Instant::now();
-        self.update_finish();
-    }
-
-    pub fn update_finish(&mut self) {
-        self.input.push_back();
     }
 
     /// Called at the start of render() so that render resources can be initialized.
     fn render_init(&mut self) {
         // Update the view/projection matrix in the transform bind group buffer.
-        self.transforms.write_view_projection(&self.queue, &self.camera.view_projection_matrix());
+        self.transforms.write_view_projection(&self.queue, &self.camera.projection_view_matrix());
     }
 
-    pub fn render(&mut self, frame_index: u64) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, _frame_index: u64) -> Result<(), wgpu::SurfaceError> {
         self.render_init();
 
         let output = self.surface.get_current_texture()?;
