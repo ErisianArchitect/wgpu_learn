@@ -30,7 +30,7 @@ pub enum TexArrErr {
 pub struct TextureArray {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub sampler: wgpu::Sampler,
+    pub samplers: TextureArraySamplers,
     pub format: wgpu::TextureFormat,
     pub dimensions: (u32, u32),
     pub layer_count: u32,
@@ -125,7 +125,7 @@ impl TextureArray {
             texture,
             view,
             format,
-            sampler: Self::create_sampler(device),
+            samplers: Self::create_samplers(device),
             dimensions: (width, height),
             layer_count: paths.len() as u32,
         })
@@ -145,8 +145,16 @@ impl TextureArray {
                     },
                     count: None,
                 },
+                // Near Sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Far Sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
@@ -162,9 +170,15 @@ impl TextureArray {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(&self.view),
                 },
+                // Near Sampler
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(&self.samplers.near),
+                },
+                // Far Sampler
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.samplers.far),
                 }
             ],
         });
@@ -174,18 +188,42 @@ impl TextureArray {
         }
     }
 
-    pub fn create_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-        device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Texture Array Sampler"),
+    pub fn create_samplers(device: &wgpu::Device) -> TextureArraySamplers {
+        let far = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Texture Array Far Sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
+            anisotropy_clamp: 16,
+            ..Default::default()
+        });
+        let near = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Texture Array Near Sampler"),
             address_mode_u: wgpu::AddressMode::Repeat,
             address_mode_v: wgpu::AddressMode::Repeat,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
-        })
+        });
+        TextureArraySamplers { near, far }
     }
+
+    pub fn texel_to_uv(&self, texpos: glam::Vec2) -> glam::Vec2 {
+        glam::vec2(
+            texpos.x / self.dimensions.0 as f32,
+            texpos.y / self.dimensions.1 as f32
+        )
+    }
+}
+
+pub struct TextureArraySamplers {
+    near: wgpu::Sampler,
+    far: wgpu::Sampler,
 }
 
 pub struct TextureArrayBindGroup {

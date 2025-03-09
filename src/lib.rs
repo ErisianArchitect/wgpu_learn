@@ -6,4 +6,8 @@ pub mod camera;
 pub mod rendering;
 pub mod math;
 pub mod input;
+pub mod framepace;
+pub mod modeling;
+pub mod gridzmo;
+pub mod voxel_fog;
 // mod trie;

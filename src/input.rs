@@ -1,5 +1,7 @@
 use winit::{dpi::PhysicalPosition, event::MouseButton, keyboard::*};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+
+use crate::framepace::AverageBuffer;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PressState {
@@ -15,16 +17,83 @@ impl PressState {
         }
     }
 
-    pub fn push_back(&mut self) {
+    pub fn end_frame(&mut self) {
         self.previous = self.current;
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone)]
+pub struct DeltaBuffer {
+    buffer: VecDeque<PhysicalPosition<f64>>,
+}
+
+impl DeltaBuffer {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            buffer: VecDeque::with_capacity(capacity),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
+    }
+    
+    pub fn capacity(&self) -> usize {
+        self.buffer.capacity()
+    }
+
+    pub fn set_capacity(&mut self, capacity: usize) {
+        assert_ne!(capacity, 0, "Capacity can not be zero.");
+        let mut new_buffer = VecDeque::with_capacity(capacity);
+        new_buffer.extend(
+            self
+                .buffer
+                .drain(self.buffer.len() - capacity.min(self.buffer.len())..self.buffer.len())
+        );
+        self.buffer = new_buffer;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.buffer.is_empty()
+    }
+
+    pub fn is_full(&self) -> bool {
+        self.buffer.len() == self.buffer.capacity()
+    }
+
+    pub fn push(&mut self, delta: PhysicalPosition<f64>) {
+        if self.buffer.len() == self.buffer.capacity() {
+            self.buffer.pop_front();
+        }
+        self.buffer.push_back(delta);
+    }
+
+    pub fn average(&self) -> PhysicalPosition<f64> {
+        if self.len() == 0 {
+            return PhysicalPosition::new(0.0, 0.0);
+        }
+        let mut total = (0.0, 0.0);
+        for &pos in self.buffer.iter() {
+            total.0 += pos.x;
+            total.1 += pos.y;
+        }
+        let divisor = self.len() as f64;
+        PhysicalPosition::new(total.0 / divisor, total.1 / divisor)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct MousePosState {
     pub previous: PhysicalPosition<f64>,
     pub current: PhysicalPosition<f64>,
     pub delta: PhysicalPosition<f64>,
+    pub delta_avg: DeltaBuffer,
+}
+
+impl Default for MousePosState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MousePosState {
@@ -33,11 +102,22 @@ impl MousePosState {
             previous: PhysicalPosition::new(0., 0.),
             current: PhysicalPosition::new(0., 0.),
             delta: PhysicalPosition::new(0., 0.),
+            delta_avg: DeltaBuffer::new(6),
         }
     }
 
-    pub fn push_back(&mut self) {
+    pub fn begin_frame(&mut self, smoothing: bool) {
+        // println!("Avg.");
+        // Mouse Smoothing
+        self.delta_avg.push(self.delta);
+        if smoothing {
+            self.delta = self.delta_avg.average();
+        }
+    }
+
+    pub fn end_frame(&mut self) {
         self.previous = self.current;
+        self.delta = PhysicalPosition::new(0., 0.);
     }
 }
 
@@ -110,10 +190,27 @@ impl Input {
         self.mouse_states.entry(button).or_default().current = pressed;
     }
 
-    pub fn push_back(&mut self) {
-        self.key_states.iter_mut().for_each(|(_, state)| state.push_back());
-        self.mouse_states.iter_mut().for_each(|(_, state)| state.push_back());
-        self.mouse_pos.push_back();
-        self.mouse_pos.delta = PhysicalPosition::new(0., 0.);
+    pub fn begin_frame(&mut self, mouse_smooothing: bool) {
+        self.mouse_pos.begin_frame(mouse_smooothing);
+    }
+
+    pub fn end_frame(&mut self) {
+        self.key_states.retain(|_, state| {
+            if !state.current {
+                false
+            } else {
+                state.end_frame();
+                true
+            }
+        });
+        self.mouse_states.retain(|_, state| {
+            if !state.current {
+                false
+            } else {
+                state.end_frame();
+                true
+            }
+        });
+        self.mouse_pos.end_frame();
     }
 }

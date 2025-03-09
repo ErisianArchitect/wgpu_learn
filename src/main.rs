@@ -1,7 +1,8 @@
 #![allow(unused)]
 
+use glam::vec3;
 use pollster;
-use wgpu_learn::state::State;
+use wgpu_learn::{framepace::AverageBuffer, modeling::modeler::Modeler, state::State};
 use std::{collections::HashMap, ops::ControlFlow, time::{Duration, Instant}};
 use image::{
     ImageBuffer, Rgba,
@@ -14,6 +15,10 @@ use winit::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Timer(Instant);
 impl Timer {
+    fn start() -> Self {
+        Self(Instant::now())
+    }
+
     fn time(&mut self) -> Duration {
         let duration = self.0.elapsed();
         self.0 = Instant::now();
@@ -40,26 +45,62 @@ impl Timer {
     }
 }
 
+struct GameSettings {
+    present_mode: wgpu::PresentMode,
+    camera_smoothing_frame_count: Option<usize>,
+    framerate_frame_count: usize,
+    fullscreen: bool,
+    window_title: &'static str,
+    window_size: Size,
+}
+
 pub async fn run() {
+    // let start_time = Instant::now();
+    // let mut m = Modeler::new();
+    // m.texture_index(0, move |m| {
+    //     for y in 0..16 {
+    //         for x in 0..16 {
+    //             let xf = x as f32;
+    //             let yf = y as f32;
+    //             m.translate(vec3(xf, 0.0, yf), move |m| {
+    //                 m.push_unit_quad();
+    //             });
+    //         }
+    //     }
+    // });
+    // let elapsed = start_time.elapsed();
+    // println!("{}, {}", m.vertices.len(), m.indices.len());
+    // println!("{:?}", &m.vertices[4..8]);
+    // println!("Elapsed: {:.06}", elapsed.as_secs_f64());
+    // return;
     env_logger::init();
-    let event_loop = EventLoop::new().unwrap();
+    let mut event_loop = EventLoop::new().unwrap();
+    event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
     let window = WindowBuilder::new()
         .with_inner_size(Size::Logical(LogicalSize::new(1280.0, 720.0)))
         .with_title("WGPU Sandbox")
         // .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
         // .with_content_protected(true)
         .build(&event_loop).unwrap();
-
+    
     // window.set_cursor_visible(false);
-
     let mut state = State::new(&window).await;
     let monitor = state.window().current_monitor().unwrap();
-    if let Some(refresh) = monitor.refresh_rate_millihertz() {
+    let frame_time = if let Some(refresh) = monitor.refresh_rate_millihertz() {
         println!("Refresh rate: {}", refresh / 1000);
-    }
+        Some(refresh as f64 / 1000.0)
+    } else {
+        None
+    };
     let mut timer = Timer(Instant::now());
     let mut wait_timer = Timer(Instant::now());
     let mut frame_counter = 0u64;
+    let mut focused = true;
+    let mut update_timer = Timer(Instant::now());
+    let mut render_timer = Timer(Instant::now());
+    let mut avg_update_time: Option<f64> = None;
+    let mut avg_render_time: Option<f64> = None;
+    let mut fps_avgs = AverageBuffer::new(32);
     event_loop.run(move |event, control_flow| {
         state.process_event(&event);
         match event {
@@ -80,20 +121,40 @@ pub async fn run() {
                         ..
                     } if state.close_requested() => control_flow.exit(),
                     WindowEvent::Focused(focus) => {
-                        state.focus_changed(*focus);
+                        focused = *focus;
+                        state.focus_changed(focused);
                     }
                     WindowEvent::Resized(physical_size) => {
                         state.resize(*physical_size);
                     }
                     WindowEvent::RedrawRequested => {
+                        // if focused {
+                        // }
                         state.begin_frame(frame_counter);
-                        let old = timer;
                         // timer.wait(Duration::from_secs(1)/60);
-                        let time = timer.time();
+                        
                         // println!("Framerate: {}", old.framerate());
-                        state.update(frame_counter);
+                        {
+                            let start_time = Timer::start();
+                            state.update(frame_counter);
+                            let end_time = start_time.elapsed();
+                            let secs = end_time.as_secs_f64();
+                            if let Some(ref mut avg) = avg_update_time {
+                                *avg = (*avg + secs) * 0.5;
+                            } else {
+                                avg_update_time.replace(secs);
+                            }
+                        }
+
                         match state.render(frame_counter) {
-                            Ok(_) => {},
+                            Ok(render_time) => {
+                                let secs = render_time.as_secs_f64();
+                                if let Some(ref mut avg) = avg_render_time {
+                                    *avg = (*avg + secs) * 0.5;
+                                } else {
+                                    avg_render_time.replace(secs);
+                                }
+                            },
                             Err(wgpu::SurfaceError::Lost) => state.resize(state.size),
                             Err(wgpu::SurfaceError::OutOfMemory) => {
                                 log::error!("OutOfMemory");
@@ -102,8 +163,17 @@ pub async fn run() {
                             Err(wgpu::SurfaceError::Timeout) => {
                                 log::warn!("Surface timeout");
                             }
-                            Err(e) => eprintln!("{e:?}"),
+                            Err(e) => eprintln!("Err: {e:?}"),
                         }
+                        let old = timer;
+                        let fps = timer.framerate();
+                        fps_avgs.push(fps);
+                        let avg_fps = fps_avgs.average();
+                        if (60.0 - avg_fps).abs() > 4.0 {
+                            println!("FPS: {:.0}", timer.framerate());
+                        }
+
+                        let time = timer.time();
                         state.end_frame(frame_counter);
                         frame_counter += 1;
                     }
@@ -111,10 +181,10 @@ pub async fn run() {
                 }
             }
             Event::AboutToWait => {
-                let wait = wait_timer;
-                wait_timer.time();
                 // println!("Wait FPS: {}", wait.framerate());
-                state.window().request_redraw();
+                if focused {
+                    state.window().request_redraw();
+                }
             }
             _ => {}
         }

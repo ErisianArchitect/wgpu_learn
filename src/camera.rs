@@ -15,6 +15,16 @@ pub fn rotation_from_direction(direction: Vec3) -> Vec2 {
     vec2(pitch, yaw)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MoveType {
+    /// Absolute movement. No rotation of the translation vector.
+    Absolute,
+    /// Free movement. Rotates the translation vector with the camera.
+    Free,
+    /// Planar movement. Rotates the translation vector with the angle around the Y axis.
+    Planar,
+}
+
 #[derive(Debug, Clone)]
 pub struct Camera {
     pub position: Vec3,
@@ -44,6 +54,7 @@ impl Camera {
         }
     }
 
+    /// Creates an unrotated camera at the given position.
     pub fn at(
         position: Vec3,
         fov: f32,
@@ -80,6 +91,7 @@ impl Camera {
         }
     }
 
+    /// `look_to` means to point in the same direction as the given `direction` vector.
     pub fn from_look_to(
         position: Vec3,
         direction: Vec3,
@@ -101,6 +113,12 @@ impl Camera {
 
     pub fn rotate_vec(&self, v: Vec3) -> Vec3 {
         let rot = self.quat();
+        rot * v
+    }
+
+    /// Rotates vector around the Y axis.
+    pub fn rotate_vec_y(&self, v: Vec3) -> Vec3 {
+        let rot = self.y_quat();
         rot * v
     }
 
@@ -128,15 +146,40 @@ impl Camera {
         self.rotate_vec(Vec3::Z)
     }
 
-    pub fn translate(&mut self, offset: Vec3) {
-        self.position += offset;
+    pub fn pan_forward(&self) -> Vec3 {
+        self.rotate_vec_y(Vec3::NEG_Z)
+    }
+
+    pub fn pan_backward(&self) -> Vec3 {
+        self.rotate_vec_y(Vec3::Z)
+    }
+
+    pub fn adv_move(&mut self, move_type: MoveType, translation: Vec3) {
+        match move_type {
+            MoveType::Absolute => self.translate(translation),
+            MoveType::Free => self.translate_rotated(translation),
+            MoveType::Planar => self.translate_planar(translation),
+        }
+    }
+
+    pub fn translate(&mut self, translation: Vec3) {
+        self.position += translation;
     }
 
     /// Translates relative to camera rotation.
-    pub fn translate_rotated(&mut self, offset: Vec3) {
-        let rot_quat = self.quat();
-        let rot_offset = rot_quat * offset;
-        self.translate(rot_offset);
+    pub fn translate_rotated(&mut self, translation: Vec3) {
+        if translation.length_squared() > 0.000001 {
+            let rot_quat = self.quat();
+            let rot_offset = rot_quat * translation;
+            self.translate(rot_offset);
+        }
+    }
+
+    /// For planar camera translation.
+    pub fn translate_planar(&mut self, translation: Vec3) {
+        if translation.length_squared() > 0.000001 {
+            self.translate(self.rotate_vec_y(translation))
+        }
     }
 
     pub fn look_at(&mut self, target: Vec3) {
@@ -149,8 +192,18 @@ impl Camera {
 
     pub fn rotate(&mut self, rotation_radians: Vec2) {
         self.rotation += rotation_radians;
-        self.rotation.x = self.rotation.x.clamp((-89.0f32).to_radians(), (89.0f32).to_radians());
-        self.rotation.y = self.rotation.y.rem_euclid(360.0f32.to_radians());
+        self.rotation.x = self.rotation.x.clamp(-90f32.to_radians(), 90f32.to_radians());
+        self.rotation.y = self.rotation.y.rem_euclid(360f32.to_radians());
+    }
+
+    pub fn rotate_x(&mut self, radians: f32) {
+        self.rotation.x += radians;
+        self.rotation.x = self.rotation.x.clamp(-90f32.to_radians(), 90f32.to_radians());
+    }
+
+    pub fn rotate_y(&mut self, radians: f32) {
+        self.rotation.y += radians;
+        self.rotation.y = self.rotation.y.rem_euclid(360f32.to_radians());
     }
 
     /// Returns the quaternion for the [Camera]'s rotation.
@@ -211,6 +264,11 @@ mod tests {
     use glam::{vec3, Vec4};
 
     use super::*;
+
+    #[test]
+    fn radians_test() {
+        assert_eq!(-90f32.to_radians(), (-90f32).to_radians());
+    }
     
     #[test]
     fn glam_test() {
