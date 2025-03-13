@@ -35,7 +35,7 @@ const indices: array<u32, 6> = array<u32, 6>(
     0, 2, 1,
     1, 2, 3,
 );
-
+// skybox2
 @vertex
 fn vs_main(
     in: VertexInput,
