@@ -1,12 +1,8 @@
 use std::path::Path;
 
-use glam::{vec2, vec3, Vec3};
 use image::GenericImageView;
-use wgpu::util::DeviceExt;
 
-use crate::{modeling::modeler::{Modeler, PosUV}, voxel::vertex::Vertex};
-
-use super::{texture_array::TextureArray, transforms::TransformsBindGroup};
+use crate::camera::Camera;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SkyboxErr {
@@ -22,15 +18,9 @@ pub enum SkyboxErr {
     }
 }
 
-const SKYBOX_VERTICES: [Vec3; 4] = [
-    vec3()
-];
-
+#[derive(Debug, Clone)]
 pub struct Skybox {
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
     render_pipeline: wgpu::RenderPipeline,
-    num_indices: u32,
     cubemap: SkyboxCubemap,
 }
 
@@ -43,6 +33,7 @@ pub struct SkyboxTexturePaths<P: AsRef<Path>> {
     pub right: P,
 }
 
+#[derive(Debug, Clone)]
 pub struct SkyboxCubemap {
     pub cubemap: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -174,6 +165,7 @@ impl SkyboxCubemap {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SkyboxCubemapBinding {
     pub layout: wgpu::BindGroupLayout,
     pub group: wgpu::BindGroup,
@@ -236,74 +228,20 @@ impl SkyboxCubemapBinding {
 }
 
 impl Skybox {
-    pub const TOP_INDEX: u32 = 0;
-    pub const BOTTOM_INDEX: u32 = 1;
-    pub const LEFT_INDEX: u32 = 2;
-    pub const RIGHT_INDEX: u32 = 3;
-    pub const FRONT_INDEX: u32 = 4;
-    pub const BACK_INDEX: u32 = 5;
     pub fn new<P: AsRef<Path>>(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         config: &wgpu::SurfaceConfiguration,
         label: Option<&str>,
         format: wgpu::TextureFormat,
-        transforms: &TransformsBindGroup,
         paths: &SkyboxTexturePaths<P>,
     ) -> Result<Self, SkyboxErr> {
         let cubemap = SkyboxCubemap::load(device, queue, label, format, paths)?;
-        // top, bottom, left, right, front, back
-        let mut m = Modeler::new();
-        let quad = [
-            PosUV::new(vec3(0.5, -0.5, -0.5), vec2(0.0, 0.0)),PosUV::new(vec3(-0.5, -0.5, -0.5), vec2(1.0, 0.0)),
-            PosUV::new(vec3(0.5, 0.5, -0.5), vec2(0.0, 1.0)),PosUV::new(vec3(-0.5, 0.5, -0.5), vec2(1.0, 1.0)),
-        ];
-        m.scale(vec3(450.0, 450.0, 450.0), |m| {
-            m.texture_index(Self::FRONT_INDEX, |m| {
-                m.push_quad(&quad);
-            });
-            m.rotate_euler(glam::EulerRot::XYZ, vec3(-90.0f32.to_radians(), 0.0, 0.0), |m| {
-                m.texture_index(Self::TOP_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
-            });
-            m.rotate_euler(glam::EulerRot::XYZ, vec3(90.0f32.to_radians(), 0.0, 0.0), |m| {
-                m.texture_index(Self::BOTTOM_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
-            });
-            m.rotate_euler(glam::EulerRot::XYZ, vec3(0.0, 90.0f32.to_radians(), 0.0), |m| {
-                m.texture_index(Self::RIGHT_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
-            });
-            m.rotate_euler(glam::EulerRot::XYZ, vec3(0.0, 180.0f32.to_radians(), 0.0), |m| {
-                m.texture_index(Self::BACK_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
-            });
-            m.rotate_euler(glam::EulerRot::XYZ, vec3(0.0, -90.0f32.to_radians(), 0.0), |m| {
-                m.texture_index(Self::LEFT_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
-            });
-        });
-        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Skybox Vertex Buffer"),
-            contents: bytemuck::cast_slice(m.vertices.as_slice()),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Skybox Index Buffer"),
-            contents: bytemuck::cast_slice(m.indices.as_slice()),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-        let num_indices = m.indices.len() as u32;
+        
         let shader = device.create_shader_module(wgpu::include_wgsl!("../shaders/skybox.wgsl"));
         let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Skybox Render Pipeline Layout"),
             bind_group_layouts: &[
-                &transforms.bind_group_layout,
                 &cubemap.binding.layout,
             ],
             push_constant_ranges: &[wgpu::PushConstantRange {
@@ -317,9 +255,7 @@ impl Skybox {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[
-                    Vertex::desc(),
-                ],
+                buffers: &[],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -341,13 +277,6 @@ impl Skybox {
                 unclipped_depth: false,
                 conservative: false,
             },
-            // depth_stencil: Some(wgpu::DepthStencilState {
-            //     format: wgpu::TextureFormat::Depth32Float,
-            //     depth_write_enabled: true,
-            //     depth_compare: wgpu::CompareFunction::Less,
-            //     stencil: wgpu::StencilState::default(),
-            //     bias: wgpu::DepthBiasState::default(),
-            // }),
             depth_stencil: None,
             multisample: wgpu::MultisampleState {
                 count: 1,
@@ -359,10 +288,7 @@ impl Skybox {
         });
 
         Ok(Self {
-            vertex_buffer,
-            index_buffer,
             render_pipeline,
-            num_indices,
             cubemap,
         })
     }
@@ -370,17 +296,13 @@ impl Skybox {
     pub fn render(
         &self,
         render_pass: &mut wgpu::RenderPass,
-        transforms: &TransformsBindGroup,
-        camera_position: Vec3,
+        camera: &Camera,
     ) {
         render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.set_bind_group(0, &transforms.bind_group, &[]);
-        self.cubemap.bind(1, render_pass);
+        self.cubemap.bind(0, render_pass);
 
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-        let world = glam::Mat4::from_translation(camera_position);
-        render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&world));
-        render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        let inv_view_proj = camera.projection_view_matrix().inverse();
+        render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&inv_view_proj));
+        render_pass.draw(0..6, 0..1);
     }
 }

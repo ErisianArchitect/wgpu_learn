@@ -105,7 +105,7 @@ pub struct State<'a> {
     pub input: Input,
     pub settings: Settings,
     pub text_rend: TextRend,
-    pub skybox: Skybox,
+    // pub skybox: Skybox,
     pub locked: bool,
     pub animation: Option<StateAnimator>,
     // pub depth_stencil: wgpu::Texture,
@@ -166,6 +166,22 @@ impl<'a> State<'a> {
             let limits = device.limits();
             println!("Push constant size limit: {}", limits.max_push_constant_size);
         }
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps.formats.iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: size.width,
+            height: size.height,
+            // enable vsync: (PresentMode::Fifo)
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
         // Texture Array
         let cube_sides_dir = std::path::PathBuf::from("./assets/textures/cube_sides/");
         let texture_array = TextureArray::from_files(
@@ -190,17 +206,39 @@ impl<'a> State<'a> {
         // let texture_array_bind_group = texture_array.bind_group(&device);
         // Transforms
         let transforms = TransformsBindGroup::new(&device);
+        
+        let skybox_dir = std::path::PathBuf::from("./assets/textures/skyboxes/complex/");
+        let skybox = Skybox::new(
+            &device,
+            &queue,
+            &config,
+            Some("Skybox"),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            // surface_format,
+            &SkyboxTexturePaths {
+                top: skybox_dir.join("purp_top.png"),
+                bottom: skybox_dir.join("purp_bottom.png"),
+                left: skybox_dir.join("purp_left.png"),
+                right: skybox_dir.join("purp_right.png"),
+                front: skybox_dir.join("purp_front.png"),
+                back: skybox_dir.join("purp_back.png"),
+            }
+        ).expect("Failed to load skybox.");
         // Camera
-        let camera = Camera::from_look_at(Vec3::new(0.0, 1.7, 0.0), Vec3::NEG_Z, 70f32.to_radians(), 0.01, 1000.0, size);
+        let camera = Camera::from_look_at(
+            Vec3::new(0.0, 1.7, 0.0),
+            Vec3::NEG_Z,
+            70f32.to_radians(),
+            0.01,
+            1000.0,
+            size,
+            Box::new(skybox),
+        );
         let view_proj_matrix = camera.projection_view_matrix();
         // transforms.write_world(&queue, &glam::Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::IDENTITY, Vec3::ZERO));
         transforms.write_view_projection(&queue, &view_proj_matrix);
         // Surface Caps/Format
-        let surface_caps = surface.get_capabilities(&adapter);
-        let surface_format = surface_caps.formats.iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
+        
         // let surface_format = if surface_caps.formats.contains(&TextureFormat::Rgba8UnormSrgb) {
         //     TextureFormat::Rgba8UnormSrgb
         // } else if surface_caps.formats.contains(&TextureFormat::Bgra8UnormSrgb) {
@@ -209,17 +247,6 @@ impl<'a> State<'a> {
         //     wgpu::TextureFormat::Rgba8Unorm
         // };
         // Config
-        let config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: surface_format,
-            width: size.width,
-            height: size.height,
-            // enable vsync: (PresentMode::Fifo)
-            present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: surface_caps.alpha_modes[0],
-            view_formats: vec![],
-            desired_maximum_frame_latency: 2,
-        };
 
         
 
@@ -353,25 +380,6 @@ impl<'a> State<'a> {
             }
         };
 
-        let skybox_dir = std::path::PathBuf::from("./assets/textures/skyboxes/complex/");
-        let skybox = Skybox::new(
-            &device,
-            &queue,
-            &config,
-            Some("Skybox"),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            // surface_format,
-            &transforms,
-            &SkyboxTexturePaths {
-                top: skybox_dir.join("purp_top.png"),
-                bottom: skybox_dir.join("purp_bottom.png"),
-                left: skybox_dir.join("purp_left.png"),
-                right: skybox_dir.join("purp_right.png"),
-                front: skybox_dir.join("purp_front.png"),
-                back: skybox_dir.join("purp_back.png"),
-            }
-        ).expect("Failed to load skybox.");
-
         // Depth texture
         // let (depth_stencil, depth_texture_view) = {
 
@@ -423,7 +431,6 @@ impl<'a> State<'a> {
                 mouse_halting: true,
             },
             text_rend,
-            skybox,
             locked: true,
             animation: None,
             // depth_stencil,
@@ -884,7 +891,9 @@ impl<'a> State<'a> {
             timestamp_writes: None
         });
 
-        self.skybox.render(&mut render_pass, &self.transforms, self.camera.position);
+        self.camera.render(&mut render_pass);
+
+        // self.skybox.render(&mut render_pass, &self.camera);
 
         // increment
         // decrement

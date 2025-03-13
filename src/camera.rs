@@ -3,7 +3,7 @@ use glam::{
 };
 use winit::dpi::PhysicalSize;
 
-use crate::math::ray::Ray3;
+use crate::{math::ray::Ray3, rendering::skybox::Skybox};
 
 pub fn rotation_from_look_at(position: Vec3, target: Vec3) -> Vec2 {
     let dir = (target - position).normalize();
@@ -35,6 +35,7 @@ pub struct Camera {
     pub z_near: f32,
     pub z_far: f32,
     pub screen_size: PhysicalSize<u32>,
+    skybox: Option<Box<Skybox>>
 }
 
 const fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
@@ -42,13 +43,14 @@ const fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
 }
 
 impl Camera {
-    pub const fn new(
+    pub fn new<S: Into<Option<Box<Skybox>>>>(
         position: Vec3,
         rotation: Vec2,
         fov: f32,
         z_near: f32,
         z_far: f32,
         screen_size: PhysicalSize<u32>,
+        skybox: S,
     ) -> Self {
         Self {
             position,
@@ -58,16 +60,18 @@ impl Camera {
             z_near,
             z_far,
             screen_size,
+            skybox: skybox.into(),
         }
     }
 
     /// Creates an unrotated camera at the given position.
-    pub fn at(
+    pub fn at<S: Into<Option<Box<Skybox>>>>(
         position: Vec3,
         fov: f32,
         z_near: f32,
         z_far: f32,
         screen_size: PhysicalSize<u32>,
+        skybox: S,
     ) -> Self {
         Self {
             position,
@@ -77,16 +81,18 @@ impl Camera {
             z_near,
             z_far,
             screen_size,
+            skybox: skybox.into(),
         }
     }
 
-    pub fn from_look_at(
+    pub fn from_look_at<S: Into<Option<Box<Skybox>>>>(
         position: Vec3,
         target: Vec3,
         fov: f32,
         z_near: f32,
         z_far: f32,
         screen_size: PhysicalSize<u32>,
+        skybox: S,
     ) -> Self {
         let rotation = rotation_from_look_at(position, target);
         Self {
@@ -97,17 +103,19 @@ impl Camera {
             z_near,
             z_far,
             screen_size,
+            skybox: skybox.into(),
         }
     }
 
     /// `look_to` means to point in the same direction as the given `direction` vector.
-    pub fn from_look_to(
+    pub fn from_look_to<S: Into<Option<Box<Skybox>>>>(
         position: Vec3,
         direction: Vec3,
         fov: f32,
         z_near: f32,
         z_far: f32,
         screen_size: PhysicalSize<u32>,
+        skybox: S,
     ) -> Self {
         let rotation = rotation_from_direction(direction);
         Self {
@@ -118,7 +126,12 @@ impl Camera {
             z_near,
             z_far,
             screen_size,
+            skybox: skybox.into(),
         }
+    }
+
+    pub fn set_skybox<T: Into<Box<Skybox>>>(&mut self, skybox: T) {
+        self.skybox = Some(skybox.into())
     }
 
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
@@ -272,6 +285,12 @@ impl Camera {
 
         Ray3::new(self.position, direction)
     }
+
+    pub fn render(&self, render_pass: &mut wgpu::RenderPass) {
+        if let Some(skybox) = &self.skybox {
+            skybox.render(render_pass, &self);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -288,7 +307,7 @@ mod tests {
     #[test]
     fn glam_test() {
         let projection = Mat4::perspective_rh(90.0f32.to_radians(), 1.0, 0.01, 1000.0);
-        let mut camera = Camera::from_look_at(Vec3::new(0., 0., 5.), Vec3::ZERO, 45f32.to_radians(), 0.01, 1000.0, PhysicalSize::new(1280, 720));
+        let mut camera = Camera::from_look_at(Vec3::new(0., 0., 5.), Vec3::ZERO, 45f32.to_radians(), 0.01, 1000.0, PhysicalSize::new(1280, 720), None);
         camera.rotate(vec2(15.0f32.to_radians(), 0.0));
         let view = camera.view_matrix();
         // let view = Mat4::look_at_rh(Vec3::new(5.0, 0.0, 0.0), Vec3::Y * 5., Vec3::Y);
