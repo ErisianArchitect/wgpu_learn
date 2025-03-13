@@ -43,7 +43,7 @@ impl PosIndex {
 pub struct Modeler {
     pub transform_stack: Vec<Mat4>,
     pub vertices: Vec<Vertex>,
-    pub indices: Vec<u16>,
+    pub indices: Vec<u32>,
 }
 
 pub struct TextureModeler<'a> {
@@ -136,8 +136,8 @@ impl Modeler {
     }
 
     pub fn push_triangle(&mut self, vertices: &[Vertex; 3]) -> &mut Self {
-        const ORDER: [u16; 3] = [0, 2, 1];
-        let start_index = self.vertices.len() as u16;
+        const ORDER: [u32; 3] = [0, 2, 1];
+        let start_index = self.vertices.len() as u32;
         let transform = self.get_transform();
         self.vertices.extend(vertices.map(|v| { Vertex::new(transform.transform_point3(v.position), v.uv, v.texindex) }));
         self.indices.extend(ORDER.map(move |n| start_index + n));
@@ -150,8 +150,8 @@ impl Modeler {
         2 3
         order: 0 2 1 2 3 1
         */
-        const ORDER: [u16; 6] = [0, 2, 1, 2, 3, 1];
-        let start_index = self.vertices.len() as u16;
+        const ORDER: [u32; 6] = [0, 2, 1, 2, 3, 1];
+        let start_index = self.vertices.len() as u32;
         let transform = self.get_transform();
         self.vertices.extend(vertices.map(|v| { Vertex::new(transform.transform_point3(v.position), v.uv, v.texindex) }));
         self.indices.extend(ORDER.clone().map(move |n| start_index + n));

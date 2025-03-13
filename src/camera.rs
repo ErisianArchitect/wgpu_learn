@@ -1,6 +1,7 @@
 use glam::{
     vec2, Mat4, Quat, Vec2, Vec3, Vec4, Vec4Swizzles
 };
+use winit::dpi::PhysicalSize;
 
 use crate::math::ray::Ray3;
 
@@ -33,6 +34,11 @@ pub struct Camera {
     pub aspect_ratio: f32,
     pub z_near: f32,
     pub z_far: f32,
+    pub screen_size: PhysicalSize<u32>,
+}
+
+const fn aspect_ratio(size: PhysicalSize<u32>) -> f32 {
+    size.width as f32 / size.height as f32
 }
 
 impl Camera {
@@ -40,17 +46,18 @@ impl Camera {
         position: Vec3,
         rotation: Vec2,
         fov: f32,
-        aspect_ratio: f32,
         z_near: f32,
         z_far: f32,
+        screen_size: PhysicalSize<u32>,
     ) -> Self {
         Self {
             position,
             rotation,
             fov,
-            aspect_ratio,
+            aspect_ratio: aspect_ratio(screen_size),
             z_near,
             z_far,
+            screen_size,
         }
     }
 
@@ -58,17 +65,18 @@ impl Camera {
     pub fn at(
         position: Vec3,
         fov: f32,
-        aspect_ratio: f32,
         z_near: f32,
         z_far: f32,
+        screen_size: PhysicalSize<u32>,
     ) -> Self {
         Self {
             position,
             rotation: Vec2::ZERO,
             fov,
-            aspect_ratio,
+            aspect_ratio: aspect_ratio(screen_size),
             z_near,
             z_far,
+            screen_size,
         }
     }
 
@@ -76,18 +84,19 @@ impl Camera {
         position: Vec3,
         target: Vec3,
         fov: f32,
-        aspect_ratio: f32,
         z_near: f32,
         z_far: f32,
+        screen_size: PhysicalSize<u32>,
     ) -> Self {
         let rotation = rotation_from_look_at(position, target);
         Self {
             position,
             rotation,
             fov,
-            aspect_ratio,
+            aspect_ratio: aspect_ratio(screen_size),
             z_near,
             z_far,
+            screen_size,
         }
     }
 
@@ -96,19 +105,25 @@ impl Camera {
         position: Vec3,
         direction: Vec3,
         fov: f32,
-        aspect_ratio: f32,
         z_near: f32,
         z_far: f32,
+        screen_size: PhysicalSize<u32>,
     ) -> Self {
         let rotation = rotation_from_direction(direction);
         Self {
             position,
             rotation,
             fov,
-            aspect_ratio,
+            aspect_ratio: aspect_ratio(screen_size),
             z_near,
             z_far,
+            screen_size,
         }
+    }
+
+    pub fn resize(&mut self, size: PhysicalSize<u32>) {
+        self.screen_size = size;
+        self.aspect_ratio = aspect_ratio(size);
     }
 
     pub fn rotate_vec(&self, v: Vec3) -> Vec3 {
@@ -273,7 +288,7 @@ mod tests {
     #[test]
     fn glam_test() {
         let projection = Mat4::perspective_rh(90.0f32.to_radians(), 1.0, 0.01, 1000.0);
-        let mut camera = Camera::from_look_at(Vec3::new(0., 0., 5.), Vec3::ZERO, 45f32.to_radians(), 1280./720., 0.01, 1000.0);
+        let mut camera = Camera::from_look_at(Vec3::new(0., 0., 5.), Vec3::ZERO, 45f32.to_radians(), 0.01, 1000.0, PhysicalSize::new(1280, 720));
         camera.rotate(vec2(15.0f32.to_radians(), 0.0));
         let view = camera.view_matrix();
         // let view = Mat4::look_at_rh(Vec3::new(5.0, 0.0, 0.0), Vec3::Y * 5., Vec3::Y);

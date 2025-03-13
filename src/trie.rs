@@ -62,7 +62,6 @@ fn trie_test() {
     }
     use Button::*;
     let mut trie = Trie::<char>::new();
-    trie.insert("Forgione".chars());
     println!("Result: {}", trie.contains_partial("Forg".chars()));
     let mut trie = Trie::<Button>::new();
     const KONAMI_CODE: [Button; 11] = [Up, Up, Down, Down, Left, Right, Left, Right, B, A, Start];

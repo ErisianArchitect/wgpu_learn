@@ -1,6 +1,7 @@
 use std::path::Path;
 
 use image::GenericImageView;
+use wgpu::TextureView;
 
 // fn log2_u32(n: u32) -> u32 {
 //     debug_assert!(n > 0);
@@ -30,10 +31,11 @@ pub enum TexArrErr {
 pub struct TextureArray {
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
-    pub samplers: TextureArraySamplers,
+    pub sampler: wgpu::Sampler,
     pub format: wgpu::TextureFormat,
     pub dimensions: (u32, u32),
     pub layer_count: u32,
+    pub bind_group: TextureArrayBindGroup,
 }
 
 impl TextureArray {
@@ -43,6 +45,9 @@ impl TextureArray {
         paths: &[P],
         label: Option<&str>,
         format: wgpu::TextureFormat,
+        address_mode_u: wgpu::AddressMode,
+        address_mode_v: wgpu::AddressMode,
+        mip_level_count: u32,
     ) -> Result<Self, TexArrErr> {
         if paths.is_empty() {
             return Err(TexArrErr::NoPaths);
@@ -58,16 +63,13 @@ impl TextureArray {
                 height,
                 depth_or_array_layers: paths.len() as u32,
             },
-            mip_level_count: 1,
+            mip_level_count: mip_level_count,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-
-        let bytes_per_row = Some(4 * width);
-        let rows_per_image = Some(height);
 
         for (i, path) in paths.iter().enumerate() {
             let img = image::open(path.as_ref())?;
@@ -83,31 +85,51 @@ impl TextureArray {
                 });
             }
 
-            let rgba = img.to_rgba8();
+            for mip_level in 0..mip_level_count {
+                let (mip, mip_width, mip_height) = if mip_level > 0 {
+                    let div = 2u32.pow(mip_level);
+                    let mip_width = img_width / div;
+                    let mip_height = img_width / div;
+                    let mip = img.resize(mip_width, mip_height, image::imageops::FilterType::Gaussian).into_rgba8();
+                    (
+                        mip,
+                        mip_width,
+                        mip_height,
+                    )
+                } else {
+                    (
+                        img.to_rgba8(),
+                        img_width,
+                        img_height,
+                    )
+                };
+                let bytes_per_row = Some(4 * mip_width);
+                let rows_per_image = Some(mip_height);
 
-            queue.write_texture(
-                wgpu::ImageCopyTexture {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d {
-                        x: 0,
-                        y: 0,
-                        z: i as u32,
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfoBase {
+                        texture: &texture,
+                        mip_level: mip_level,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: i as u32,
+                        },
+                        aspect: wgpu::TextureAspect::All,
                     },
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &rgba,
-                wgpu::ImageDataLayout {
-                    offset: 0,
-                    bytes_per_row,
-                    rows_per_image,
-                },
-                wgpu::Extent3d {
-                    width,
-                    height,
-                    depth_or_array_layers: 1,
-                },
-            );
+                    &mip,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row,
+                        rows_per_image,
+                    },
+                    wgpu::Extent3d {
+                        width: mip_width,
+                        height: mip_height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
         }
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -119,19 +141,30 @@ impl TextureArray {
             mip_level_count: None,
             base_array_layer: 0,
             array_layer_count: None,
+            ..Default::default()
         });
-
+        let sampler = Self::create_sampler(device, address_mode_u, address_mode_v);
+        let bind_group = Self::bind_group(
+            device,
+            &view,
+            &sampler,
+        );
         Ok(Self {
             texture,
+            bind_group,
             view,
             format,
-            samplers: Self::create_samplers(device),
+            sampler,
             dimensions: (width, height),
             layer_count: paths.len() as u32,
         })
     }
 
-    pub fn bind_group(&self, device: &wgpu::Device) -> TextureArrayBindGroup {
+    pub fn bind_group(
+        device: &wgpu::Device,
+        view: &TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> TextureArrayBindGroup {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Texture Array Bind Group Layout"),
             entries: &[
@@ -152,13 +185,6 @@ impl TextureArray {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                // Far Sampler
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
             ],
         });
 
@@ -168,18 +194,13 @@ impl TextureArray {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&self.view),
+                    resource: wgpu::BindingResource::TextureView(view),
                 },
                 // Near Sampler
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.samplers.near),
+                    resource: wgpu::BindingResource::Sampler(sampler),
                 },
-                // Far Sampler
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.samplers.far),
-                }
             ],
         });
         TextureArrayBindGroup {
@@ -188,29 +209,30 @@ impl TextureArray {
         }
     }
 
-    pub fn create_samplers(device: &wgpu::Device) -> TextureArraySamplers {
-        let far = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Texture Array Far Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            address_mode_w: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
-            anisotropy_clamp: 16,
-            ..Default::default()
-        });
+    pub fn create_sampler(device: &wgpu::Device, address_mode_u: wgpu::AddressMode, address_mode_v: wgpu::AddressMode) -> wgpu::Sampler {
+        // let far = device.create_sampler(&wgpu::SamplerDescriptor {
+        //     label: Some("Texture Array Far Sampler"),
+        //     address_mode_u,
+        //     address_mode_v,
+        //     address_mode_w: wgpu::AddressMode::ClampToEdge,
+        //     mag_filter: wgpu::FilterMode::Linear,
+        //     min_filter: wgpu::FilterMode::Linear,
+        //     mipmap_filter: wgpu::FilterMode::Linear,
+        //     anisotropy_clamp: 16,
+        //     ..Default::default()
+        // });
         let near = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Texture Array Near Sampler"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
+            label: Some("Texture Array Sampler"),
+            address_mode_u,
+            address_mode_v,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Nearest,
             mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        TextureArraySamplers { near, far }
+        // TextureArraySamplers { near, far }
+        near
     }
 
     pub fn texel_to_uv(&self, texpos: glam::Vec2) -> glam::Vec2 {

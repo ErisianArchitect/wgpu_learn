@@ -1,18 +1,20 @@
-
-use std::arch::x86_64;
+#![allow(unused)]
 use std::time::{Duration, Instant};
+use std::fmt::Write;
 
 use glam::{vec2, vec3, vec4, Vec3};
-use wgpu::ShaderStages;
+use wgpu::{MemoryHints, MultisampleState, ShaderStages, TextureFormat};
 use wgpu::{self, util::DeviceExt};
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{DeviceEvent, Event, MouseButton};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::{event::WindowEvent, window::Window};
 
+use crate::animation::animtimer::AnimTimer;
 use crate::camera::Camera;
 use crate::input::Input;
 use crate::modeling::modeler::Modeler;
+use crate::rendering::skybox::{Skybox, SkyboxTexturePaths};
 use crate::rendering::texture_array::TextureArrayBindGroup;
 use crate::voxel::vertex::Vertex;
 use crate::rendering::{
@@ -20,10 +22,60 @@ use crate::rendering::{
     transforms::TransformsBindGroup,
 };
 use crate::voxel_fog::{Fog, FogBindGroup};
+use crate::FrameInfo;
+
+use glyphon::{Attrs, Buffer, Cache, Color, FontSystem, Metrics, Resolution, SwashCache, TextArea, TextAtlas, TextRenderer, Viewport, Weight};
 
 pub struct Settings {
     pub mouse_smoothing: bool,
+    pub mouse_halting: bool,
 }
+
+pub struct TextRend {
+    font_system: FontSystem,
+    text_atlas: TextAtlas,
+    text_renderer: TextRenderer,
+    front_buffer: Buffer,
+    back_buffer: Buffer,
+    cache: Cache,
+    swash_cache: SwashCache,
+}
+
+pub struct StateAnimator {
+    timer: AnimTimer,
+    callback: Box<dyn Fn(&mut State<'_>, &AnimTimer) + 'static>,
+}
+
+impl StateAnimator {
+    pub fn start<F: Fn(&mut State<'_>, &AnimTimer) + 'static>(duration: Duration, callback: F) -> Self {
+        Self {
+            timer: AnimTimer::start(duration),
+            callback: Box::new(callback),
+        }
+    }
+
+    /// Update the animation and return true when it is finished.
+    /// 
+    /// This function will call the inner callback regardless of whether or not the animation is finished.
+    /// You should use the result of this function to determine when to stop calling this function.
+    /// Think of it like this:
+    /// ```rust, no_run
+    /// let mut state: State<'_> = ...;
+    /// let animator: StateAnimator = ...;
+    /// let mut should_stop_animating = animator.is_finished();
+    /// // ... later in loop
+    /// if !should_stop_animating {
+    ///     should_stop_animating = animator.update(&mut state);
+    /// }
+    /// 
+    /// ```
+    pub fn update(&self, state: &mut State<'_>) -> bool {
+        (self.callback)(state, &self.timer);
+        self.timer.is_finished()
+    }
+}
+
+// pub struct Animation
 
 pub struct State<'a> {
     pub surface: wgpu::Surface<'a>,
@@ -42,7 +94,6 @@ pub struct State<'a> {
     pub last_time: std::time::Instant,
     // Texture Array
     pub texture_array: TextureArray,
-    pub texture_array_bind_group: TextureArrayBindGroup,
     // Transforms
     pub transforms: TransformsBindGroup,
     // Fog
@@ -53,6 +104,13 @@ pub struct State<'a> {
     // Input State
     pub input: Input,
     pub settings: Settings,
+    pub text_rend: TextRend,
+    pub skybox: Skybox,
+    pub locked: bool,
+    pub animation: Option<StateAnimator>,
+    // pub depth_stencil: wgpu::Texture,
+    // pub depth_texture_view: wgpu::TextureView,
+    // pub glyphon_pipeline: wgpu::RenderPipeline,
 }
 
 impl<'a> State<'a> {
@@ -60,7 +118,7 @@ impl<'a> State<'a> {
         let size = window.inner_size();
         let aspect_ratio = size.width as f32 / size.height as f32;
         // Instance
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
@@ -85,6 +143,7 @@ impl<'a> State<'a> {
                 required_features: wgpu::Features::PUSH_CONSTANTS,
                 required_limits: limits,
                 label: None,
+                memory_hints: MemoryHints::Performance,
             },
             None
         ).await.unwrap();
@@ -113,23 +172,26 @@ impl<'a> State<'a> {
             &device,
             &queue,
             &[
-                cube_sides_dir.join("stone_bricks.png"),
-                cube_sides_dir.join("stone_bricks.png"),
-                cube_sides_dir.join("stone_bricks.png"),
-                cube_sides_dir.join("stone_bricks.png"),
-                cube_sides_dir.join("stone_bricks.png"),
+                cube_sides_dir.join("diagnatiles.png"),
+                cube_sides_dir.join("diagnatiles.png"),
+                cube_sides_dir.join("diagnatiles.png"),
+                cube_sides_dir.join("diagnatiles.png"),
+                cube_sides_dir.join("diagnatiles.png"),
+                cube_sides_dir.join("diagnatiles.png"),
                 // cube_sides_dir.join("pos_y.png"),
-                cube_sides_dir.join("stone_bricks.png"),
             ],
             Some("Debug Texture Array"),
             wgpu::TextureFormat::Rgba8UnormSrgb,
+            wgpu::AddressMode::Repeat,
+            wgpu::AddressMode::Repeat,
+            7,
         ).expect("Failed to load texture array.");
         // Texture Array Bind Group
-        let texture_array_bind_group = texture_array.bind_group(&device);
+        // let texture_array_bind_group = texture_array.bind_group(&device);
         // Transforms
         let transforms = TransformsBindGroup::new(&device);
         // Camera
-        let camera = Camera::from_look_at(Vec3::new(0.0, 1.0, 0.0), Vec3::NEG_Z, 45f32.to_radians(), aspect_ratio, 0.01, 1000.0);
+        let camera = Camera::from_look_at(Vec3::new(0.0, 1.7, 0.0), Vec3::NEG_Z, 70f32.to_radians(), 0.01, 1000.0, size);
         let view_proj_matrix = camera.projection_view_matrix();
         // transforms.write_world(&queue, &glam::Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::IDENTITY, Vec3::ZERO));
         transforms.write_view_projection(&queue, &view_proj_matrix);
@@ -139,6 +201,13 @@ impl<'a> State<'a> {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
+        // let surface_format = if surface_caps.formats.contains(&TextureFormat::Rgba8UnormSrgb) {
+        //     TextureFormat::Rgba8UnormSrgb
+        // } else if surface_caps.formats.contains(&TextureFormat::Bgra8UnormSrgb) {
+        //     TextureFormat::Bgra8UnormSrgb
+        // } else {
+        //     wgpu::TextureFormat::Rgba8Unorm
+        // };
         // Config
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -154,7 +223,7 @@ impl<'a> State<'a> {
 
         
 
-        let fog = Fog::new(50.0, 250.0, vec4(0.0, 0.0, 0.0, 1.0));
+        let fog = Fog::new(100.0, 200.0, vec4(0.0, 0.0, 0.0, 0.0));
         let fog_bind_group = FogBindGroup::new(&device);
         fog_bind_group.write_fog(&queue, &fog);
 
@@ -166,7 +235,7 @@ impl<'a> State<'a> {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[
                 &transforms.bind_group_layout,
-                &texture_array_bind_group.bind_group_layout,
+                &texture_array.bind_group.bind_group_layout,
                 &fog_bind_group.bind_group_layout,
             ],
             push_constant_ranges: &[wgpu::PushConstantRange {
@@ -180,19 +249,25 @@ impl<'a> State<'a> {
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: "vs_main",
+                entry_point: Some("vs_main"),
                 buffers: &[
                     Vertex::desc()
                 ],
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    ..Default::default()
+                },
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: "fs_main",
+                entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    ..Default::default()
+                },
             }),
             primitive: wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
@@ -210,6 +285,7 @@ impl<'a> State<'a> {
                 alpha_to_coverage_enabled: false,
             },
             multiview: None,
+            cache: None,
         });
 
         let mut m = Modeler::new();
@@ -246,6 +322,83 @@ impl<'a> State<'a> {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let text_rend = {
+            let mut font_system = FontSystem::new();
+            let cache = glyphon::Cache::new(&device);
+            let mut text_atlas = TextAtlas::new(&device, &queue, &cache, surface_format);
+            let text_renderer = TextRenderer::new(
+                &mut text_atlas,
+                &device,
+                MultisampleState {
+                    count: 1,
+                    mask: !0,
+                    alpha_to_coverage_enabled: false
+                },
+                None,
+            );
+
+            let mut front_buffer = Buffer::new(&mut font_system, Metrics::new(48.0, 48.0));
+            front_buffer.set_size(&mut font_system, Some(size.width as f32), Some(size.height as f32));
+            let mut back_buffer = Buffer::new(&mut font_system, Metrics::new(48.0, 48.0));
+            front_buffer.set_size(&mut font_system, Some(size.width as f32), Some(size.height as f32));
+
+            TextRend {
+                font_system,
+                cache,
+                text_atlas,
+                text_renderer,
+                front_buffer,
+                back_buffer,
+                swash_cache: SwashCache::new(),
+            }
+        };
+
+        let skybox_dir = std::path::PathBuf::from("./assets/textures/skyboxes/complex/");
+        let skybox = Skybox::new(
+            &device,
+            &queue,
+            &config,
+            Some("Skybox"),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            // surface_format,
+            &transforms,
+            &SkyboxTexturePaths {
+                top: skybox_dir.join("purp_top.png"),
+                bottom: skybox_dir.join("purp_bottom.png"),
+                left: skybox_dir.join("purp_left.png"),
+                right: skybox_dir.join("purp_right.png"),
+                front: skybox_dir.join("purp_front.png"),
+                back: skybox_dir.join("purp_back.png"),
+            }
+        ).expect("Failed to load skybox.");
+
+        // Depth texture
+        // let (depth_stencil, depth_texture_view) = {
+
+        //     let depth_stencil = device.create_texture(&wgpu::TextureDescriptor {
+        //         label: Some("Depth Texture"),
+        //         size: wgpu::Extent3d {
+        //             width: size.width,
+        //             height: size.height,
+        //             depth_or_array_layers: 1,
+        //         },
+        //         mip_level_count: 1,
+        //         sample_count: 1,
+        //         dimension: wgpu::TextureDimension::D2,
+        //         format: wgpu::TextureFormat::Depth32Float,
+        //         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        //         view_formats: &[],
+        //     });
+
+        //     let depth_texture_view = depth_stencil.create_view(&wgpu::TextureViewDescriptor::default());
+
+        //     (
+        //         // TODO
+        //         depth_stencil,
+        //         depth_texture_view,
+        //     )
+        // };
+
         // return
         Self {
             window,
@@ -259,7 +412,6 @@ impl<'a> State<'a> {
             index_buffer,
             num_indices: m.indices.len() as u32,
             texture_array,
-            texture_array_bind_group,
             camera,
             transforms,
             fog_bind_group,
@@ -268,7 +420,14 @@ impl<'a> State<'a> {
             input: Input::default(),
             settings: Settings {
                 mouse_smoothing: true,
+                mouse_halting: true,
             },
+            text_rend,
+            skybox,
+            locked: true,
+            animation: None,
+            // depth_stencil,
+            // depth_texture_view,
         }
     }
 
@@ -289,7 +448,9 @@ impl<'a> State<'a> {
             self.config.width = new_size.width;
             self.config.height = new_size.height;
             self.surface.configure(&self.device, &self.config);
-            self.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
+            // self.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
+            self.camera.resize(new_size);
+            // self.text_rend.buffer.set_size(&mut self.text_rend.font_system, Some(new_size.width as f32), Some(new_size.height as f32));
         }
     }
 
@@ -307,6 +468,7 @@ impl<'a> State<'a> {
             Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta }, .. } => {
                 self.input.mouse_pos.delta.x += delta.0;
                 self.input.mouse_pos.delta.y += delta.1;
+                self.input.mouse_pos.live_mouse.set_target(delta.0, delta.1);
                 // self.window.set_cursor_position(self.window_center()).unwrap();
                 // const MOUSE_SENSITIVITY: f64 = 0.00075;
                 // let rot_y = -(delta.0 * MOUSE_SENSITIVITY);
@@ -324,6 +486,7 @@ impl<'a> State<'a> {
             },
             WindowEvent::CursorMoved { position, .. } => {
                 self.input.mouse_pos.current = *position;
+                // self.input.mouse_pos.live_mouse.set_target(position.x, position.y);
             },
             WindowEvent::MouseWheel { device_id, delta, phase } => {
                 match delta {
@@ -369,11 +532,11 @@ impl<'a> State<'a> {
         false
     }
 
-    pub fn begin_frame(&mut self, _frame_index: u64) {
-        self.input.begin_frame(self.settings.mouse_smoothing);
+    pub fn begin_frame(&mut self, frame: &FrameInfo) {
+        self.input.begin_frame(&self.settings, frame);
     }
 
-    pub fn end_frame(&mut self, _frame_index: u64) {
+    pub fn end_frame(&mut self, frame: &FrameInfo) {
         // let w = self.size.width as f64;
         // let h = self.size.height as f64;
         // let mid_x = w * 0.5;
@@ -384,18 +547,18 @@ impl<'a> State<'a> {
         self.input.end_frame();
     }
 
-    pub fn begin_update(&mut self, _frame_index: u64) {
+    pub fn begin_update(&mut self, frame: &FrameInfo) {
 
     }
 
-    pub fn end_update(&mut self, _frame_index: u64) {
+    pub fn end_update(&mut self, frame: &FrameInfo) {
 
     }
 
-    pub fn update(&mut self, frame_index: u64) {
+    pub fn update(&mut self, frame: &FrameInfo) {
         
         let elapsed = self.last_time.elapsed();
-        let t = elapsed.as_secs_f32();
+        let t = frame.delta_time.as_secs_f32();
 
         if self.input.key_just_pressed(KeyCode::F11) {
             // self.window.set_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
@@ -409,43 +572,79 @@ impl<'a> State<'a> {
         // let rot = -15f32.to_radians() * t;
         // self.camera.rotate(vec2(0.0, rot));
 
-        if self.input.key_just_pressed(KeyCode::Digit1) {
-            self.camera.look_at(Vertex::PLANE_VERTICES[0].position);
-        }
-        if self.input.key_just_pressed(KeyCode::Digit2) {
-            self.camera.look_at(Vertex::PLANE_VERTICES[1].position);
-        }
-        if self.input.key_just_pressed(KeyCode::Digit3) {
-            self.camera.look_at(Vertex::PLANE_VERTICES[2].position);
-        }
-        if self.input.key_just_pressed(KeyCode::Digit4) {
-            self.camera.look_at(Vertex::PLANE_VERTICES[3].position);
-        }
-        if self.input.key_pressed(KeyCode::Digit5) {
-            self.camera.look_at(Vec3::X);
-        }
+        // if self.input.key_just_pressed(KeyCode::Digit1) {
+        //     self.camera.look_at(Vertex::PLANE_VERTICES[0].position);
+        // }
+        // if self.input.key_just_pressed(KeyCode::Digit2) {
+        //     self.camera.look_at(Vertex::PLANE_VERTICES[1].position);
+        // }
+        // if self.input.key_just_pressed(KeyCode::Digit3) {
+        //     self.camera.look_at(Vertex::PLANE_VERTICES[2].position);
+        // }
+        // if self.input.key_just_pressed(KeyCode::Digit4) {
+        //     self.camera.look_at(Vertex::PLANE_VERTICES[3].position);
+        // }
+        // if self.input.key_pressed(KeyCode::Digit5) {
+        //     self.camera.look_at(Vec3::X);
+        // }
 
         let mut total_movement = Vec3::ZERO;
         let mut moved = false;
 
         let w = self.input.key_pressed(KeyCode::KeyW);
-        let a = self.input.key_pressed(KeyCode::KeyA);
         let s = self.input.key_pressed(KeyCode::KeyS);
+
+        let a = self.input.key_pressed(KeyCode::KeyA);
         let d = self.input.key_pressed(KeyCode::KeyD);
+
         let r = self.input.key_pressed(KeyCode::KeyR);
         let f = self.input.key_pressed(KeyCode::KeyF);
-        
 
-        // Forward
+        let tk = self.input.key_pressed(KeyCode::KeyT);
+        let g = self.input.key_pressed(KeyCode::KeyG);
+
+        let d2 = self.input.key_pressed(KeyCode::Digit2);
+        let x = self.input.key_pressed(KeyCode::KeyX);
+        
+        let move_multiplier = if self.input.key_pressed(KeyCode::ShiftLeft) {
+            12.0
+        } else {
+            4.0
+        };
+
+        // Forward (Planar)
         if w && !s {
             total_movement += Vec3::NEG_Z;
             moved = true;
             // self.camera.translate_rotated(Vec3::NEG_Z * t);
-        } else if s && !w {
+        } else if s && !w { // Backward (Planar)
             total_movement += Vec3::Z;
             moved = true;
             // self.camera.translate_rotated(Vec3::Z * t);
         }
+
+        // Forward (Free)
+        if d2 && !x {
+            self.camera.position += self.camera.forward() * t * move_multiplier;
+            moved = true;
+            // self.camera.translate_rotated(Vec3::Y * t);
+        } else if x && !d2 { // Backward (Free)
+            self.camera.position += self.camera.backward() * t * move_multiplier;
+            moved = true;
+            // self.camera.translate_rotated(Vec3::NEG_Y * t);
+        }
+
+        // Rise
+        if r && !f {
+            total_movement += Vec3::Y;
+            moved = true;
+            // self.camera.translate_rotated(Vec3::Y * t);
+        } else if f && !r { // Fall
+            total_movement += Vec3::NEG_Y;
+            moved = true;
+            // self.camera.translate_rotated(Vec3::NEG_Y * t);
+        }
+
         // Leftward
         if a && !d {
             total_movement += Vec3::NEG_X;
@@ -456,20 +655,12 @@ impl<'a> State<'a> {
             moved = true;
             // self.camera.translate_rotated(Vec3::X * t);
         }
-        // Rise
-        if r && !f {
-            total_movement += Vec3::Y;
-            moved = true;
-            // self.camera.translate_rotated(Vec3::Y * t);
-        } else if f && !r {
-            total_movement += Vec3::NEG_Y;
-            moved = true;
-            // self.camera.translate_rotated(Vec3::NEG_Y * t);
-        }
+        
 
         if moved {
-            let movement = total_movement.normalize() * t * 4.0;
+            let movement = total_movement.normalize() * t * move_multiplier;
             self.camera.translate_planar(movement);
+            self.animation.take();
         }
         
         let mouse_pos = self.input.mouse_pos.current;
@@ -493,12 +684,53 @@ impl<'a> State<'a> {
             // let new_pos = ray.point_on_ray(t);
             self.camera.position = ray.point_on_ray(t * -0.25);
         }
-        self.texture_array.texel_to_uv(vec2(32.0, 32.0));
-        if self.input.key_just_pressed(KeyCode::KeyC) {
-            self.window.set_content_protected(true);
+        // self.texture_array.texel_to_uv(vec2(32.0, 32.0));
+        // if self.input.key_just_pressed(KeyCode::KeyC) {
+        //     self.window.set_content_protected(true);
+        // }
+        // if self.input.key_just_pressed(KeyCode::KeyX) {
+        //     self.window.set_content_protected(false);
+        // }
+
+        if self.input.key_just_pressed(KeyCode::Tab) {
+            self.locked = !self.locked;
+            if self.locked {
+                self.window.set_cursor_visible(false);
+            } else {
+                self.window.set_cursor_visible(true);
+            }
         }
-        if self.input.key_just_pressed(KeyCode::KeyX) {
-            self.window.set_content_protected(false);
+
+        if self.input.key_pressed(KeyCode::KeyE) {
+            self.camera.position += self.camera.forward() * t * move_multiplier;
+        }
+
+        if self.input.key_just_pressed(KeyCode::ArrowRight) {
+            let start = self.camera.position;
+            let mut end = self.camera.position + self.camera.right() * 4.0;
+            self.animation.replace(StateAnimator::start(Duration::from_secs(1), move |state, anim| {
+                use crate::animation::tween;
+                let pos = start.lerp(end, tween::f32::quartic_in_out(anim.alpha_f32()));
+                state.camera.position = pos;
+            }));
+        } else if self.input.key_just_pressed(KeyCode::ArrowLeft) {
+            let start = self.camera.position;
+            let mut end = self.camera.position + self.camera.left() * 4.0;
+            self.animation.replace(StateAnimator::start(Duration::from_secs(1), move |state, anim| {
+                use crate::animation::tween;
+                let pos = start.lerp(end, tween::f32::quartic_in_out(anim.alpha_f32()));
+                state.camera.position = pos;
+            }));
+        }
+
+        if self.input.key_just_pressed(KeyCode::KeyY) {
+            let start = self.camera.position;
+            let mut end = vec3(64.0*16.0, 1.0, 64.0*16.0);
+            self.animation.replace(StateAnimator::start(Duration::from_secs(10), move |state, anim| {
+                use crate::animation::tween;
+                let pos = start.lerp(end, tween::f32::quartic_in_out(anim.alpha_f32()));
+                state.camera.position = pos;
+            }));
         }
 
         // Mouse Move
@@ -506,7 +738,9 @@ impl<'a> State<'a> {
         // Toggle Mouse Smoothing
         if self.input.key_just_pressed(KeyCode::KeyH) {
             self.settings.mouse_smoothing = !self.settings.mouse_smoothing;
-            println!("Mouse Smoothing: {}", self.settings.mouse_smoothing);
+        }
+        if self.input.key_just_pressed(KeyCode::KeyJ) {
+            self.settings.mouse_halting = !self.settings.mouse_halting;
         }
 
         // Change Smoothing Frame Count
@@ -514,18 +748,16 @@ impl<'a> State<'a> {
             let capacity = self.input.mouse_pos.delta_avg.capacity();
             if capacity < 30 {
                 self.input.mouse_pos.delta_avg.set_capacity(capacity + 1);
-                println!("Smoothing Capacity: {}", capacity + 1);
             }
         }
         if self.input.key_just_pressed(KeyCode::ArrowDown) {
             let capacity = self.input.mouse_pos.delta_avg.capacity();
-            if capacity > 0 {
+            if capacity > 1 {
                 self.input.mouse_pos.delta_avg.set_capacity(capacity - 1);
-                println!("Smoothing Capacity: {}", capacity - 1);
             }
         }
 
-        const MOUSE_SENSITIVITY: f64 = 0.00075;
+        const MOUSE_SENSITIVITY: f64 = 0.00075 * 2.5;
 
         if self.input.mouse_just_pressed(MouseButton::Middle) {
             self.window.set_cursor_visible(true);
@@ -534,28 +766,36 @@ impl<'a> State<'a> {
             self.window.set_cursor_visible(false);
         }
 
-        if !self.input.mouse_pressed(MouseButton::Middle) {
+        if self.input.key_just_pressed(KeyCode::Digit4) {
+            println!("{:?}", self.input.mouse_pos.live_mouse.velocity());
+        }
+
+        if self.locked && !self.input.mouse_pressed(MouseButton::Middle) {
+            // let rot_y = -(self.input.mouse_pos.live_mouse.velocity().0 * MOUSE_SENSITIVITY);
+            // let rot_x = -(self.input.mouse_pos.live_mouse.velocity().1 * MOUSE_SENSITIVITY);
             let rot_y = -(self.input.mouse_pos.delta.x * MOUSE_SENSITIVITY);
             let rot_x = -(self.input.mouse_pos.delta.y * MOUSE_SENSITIVITY);
-    
+            
             self.camera.rotate(vec2(rot_x as f32, rot_y as f32));
             self.window.set_cursor_position(self.window_center()).unwrap();
         }
 
-        if self.input.key_just_pressed(KeyCode::KeyT) {
-            println!("FPS: {:.0}, FI: {frame_index}", 1.0 / t);
-            println!("Rotation: {:.0}", self.camera.rotation.y.to_degrees());
+        if let Some(mut anim) = self.animation.take() {
+            if !anim.update(self) {
+                self.animation = Some(anim);
+            }
         }
+
+        // if self.input.key_just_pressed(KeyCode::KeyT) {
+        //     println!("FPS: {:.0}, FI: {}", 1.0 / t, frame.index);
+        //     println!("Rotation: {:.0}", self.camera.rotation.y.to_degrees());
+        // }
         // const MOUSE_SENSITIVITY: f32 = 0.05;
         // let mouse_offset = self.input.mouse_offset();
         // let mx = (mouse_offset.x as f32 * MOUSE_SENSITIVITY) * t;
         // let my = (mouse_offset.y as f32 * MOUSE_SENSITIVITY) * t;
 
         // self.camera.rotate(vec2(-my, -mx));
-
-        if frame_index % 60 == 0 {
-            println!("Frame: {frame_index}");
-        }
         // let fps = 1.0 / t;
         // if fps < 55.0 {
         //     println!("FPS: {}", fps);
@@ -572,7 +812,7 @@ impl<'a> State<'a> {
         self.fog_bind_group.write_fog(&self.queue, &self.fog);
     }
 
-    pub fn render(&mut self, _frame_index: u64) -> Result<Duration, wgpu::SurfaceError> {
+    pub fn render(&mut self, frame: &FrameInfo) -> Result<Duration, wgpu::SurfaceError> {
         let start_time = Instant::now();
         self.render_init();
 
@@ -581,6 +821,44 @@ impl<'a> State<'a> {
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder")
         });
+
+        let mut viewport = Viewport::new(&self.device, &self.text_rend.cache);
+        viewport.update(&self.queue, Resolution { width: self.size.width, height: self.size.height });
+
+        let mut render_text = String::new();
+
+        writeln!(render_text, "Frame Index: {}", frame.index);
+        writeln!(render_text, "FPS: {:.0}", frame.fps);
+        if self.settings.mouse_smoothing {
+            writeln!(render_text, "Mouse Smoothing: {}", self.input.mouse_pos.delta_avg.capacity());
+            writeln!(render_text, "Mouse Halting: {}", self.settings.mouse_halting);
+        } else {
+            writeln!(render_text, "Mouse Smoothing: Off");
+        }
+        writeln!(render_text, "Animating: {}", self.animation.is_some());
+        // writeln!(render_text, "Forward: {:?}", self.camera.forward());
+
+        // self.text_rend.buffer.set_text(
+        //     &mut self.text_rend.font_system,
+        //     &render_text,
+        //     Attrs::new()
+        //         // .color(Color::rgb(255, 255, 255))
+        //         ,
+        //     glyphon::Shaping::Advanced,
+        // );
+
+        // let mut text_area = TextArea {
+        //     bounds: glyphon::TextBounds { left: 10, top: 10, right: self.size.width as i32, bottom: self.size.height as i32 },
+        //     buffer: &self.text_rend.buffer,
+        //     left: 10.0,
+        //     top: 10.0,
+        //     scale: 1.0,
+        //     default_color: Color::rgb(221, 0, 255),
+        //     custom_glyphs: &[]
+        // };
+        // self.text_rend.text_renderer.prepare(&self.device, &self.queue, &mut self.text_rend.font_system, &mut self.text_rend.text_atlas, &viewport, [text_area], &mut self.text_rend.swash_cache).expect("Failed.");
+
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -588,20 +866,31 @@ impl<'a> State<'a> {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.1, g: 0.2, b: 0.3, a: 1.0
+                            r: 0.0, g: 0.0, b: 0.0, a: 1.0
                         }),
                         store: wgpu::StoreOp::Store
                     }
             })],
+            // depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+            //     view: &self.depth_texture_view,
+            //     depth_ops: Some(wgpu::Operations {
+            //         load: wgpu::LoadOp::Clear(1.0),
+            //         store: wgpu::StoreOp::Store,
+            //     }),
+            //     stencil_ops: None,
+            // }),
             depth_stencil_attachment: None,
             occlusion_query_set: None,
             timestamp_writes: None
         });
+
+        self.skybox.render(&mut render_pass, &self.transforms, self.camera.position);
+
         // increment
         // decrement
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_bind_group(0, &self.transforms.bind_group, &[]);
-        render_pass.set_bind_group(1, &self.texture_array_bind_group.bind_group, &[]);
+        render_pass.set_bind_group(1, &self.texture_array.bind_group.bind_group, &[]);
         render_pass.set_bind_group(2, &self.fog_bind_group.bind_group, &[]);
 
         // const LOCS: &'static [Vec3] = &[
@@ -614,7 +903,7 @@ impl<'a> State<'a> {
         // let mat2 = glam::Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::IDENTITY, Vec3::X);
         // let mat2 = glam::Mat4::from_translation(Vec3::X);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         // for &loc in LOCS.iter() {
         //     let world = glam::Mat4::from_translation(loc);
         //     render_pass.set_push_constants(ShaderStages::VERTEX, 0, bytemuck::bytes_of(&world));
@@ -626,6 +915,55 @@ impl<'a> State<'a> {
                 render_pass.set_push_constants(ShaderStages::VERTEX, 0, bytemuck::bytes_of(&world));
                 render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
             }
+        }
+        
+        // ██████████████████
+        // █                █
+        // █ Text Rendering █
+        // █                █
+        // ██████████████████
+        {
+
+            
+
+            self.text_rend.back_buffer.set_text(
+                &mut self.text_rend.font_system,
+                &render_text,
+                Attrs::new()
+                    // .color(Color::rgb(255, 255, 255))
+                    ,
+                glyphon::Shaping::Advanced,
+            );
+            let mut back_text = TextArea {
+                bounds: glyphon::TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 },
+                buffer: &self.text_rend.back_buffer,
+                left: 10.0,
+                top: 10.0,
+                scale: 1.0,
+                default_color: Color::rgb(50, 50, 50),
+                custom_glyphs: &[]
+            };
+
+            self.text_rend.front_buffer.set_text(
+                &mut self.text_rend.font_system,
+                &render_text,
+                Attrs::new()
+                    .color(Color::rgb(200, 200, 200))
+                    ,
+                glyphon::Shaping::Advanced,
+            );
+            let mut front_text = TextArea {
+                bounds: glyphon::TextBounds { left: 0, top: 0, right: self.size.width as i32, bottom: self.size.height as i32 },
+                buffer: &self.text_rend.front_buffer,
+                left: 8.0,
+                top: 9.0,
+                scale: 1.0,
+                default_color: Color::rgb(0, 0, 0),
+                custom_glyphs: &[]
+            };
+
+            self.text_rend.text_renderer.prepare(&self.device, &self.queue, &mut self.text_rend.font_system, &mut self.text_rend.text_atlas, &viewport, [front_text, back_text], &mut self.text_rend.swash_cache).expect("Failed.");
+            self.text_rend.text_renderer.render(&self.text_rend.text_atlas, &viewport, &mut render_pass).expect("Failed to render text.");
         }
 
         // render_pass.set_push_constants(ShaderStages::VERTEX, 0, bytemuck::bytes_of(&mat2));

@@ -1,7 +1,7 @@
 use winit::{dpi::PhysicalPosition, event::MouseButton, keyboard::*};
 use std::collections::{HashMap, VecDeque};
 
-use crate::framepace::AverageBuffer;
+use crate::{framepace::AverageBuffer, livemouse::LiveMouse, state::Settings, FrameInfo};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PressState {
@@ -80,6 +80,10 @@ impl DeltaBuffer {
         let divisor = self.len() as f64;
         PhysicalPosition::new(total.0 / divisor, total.1 / divisor)
     }
+
+    pub fn clear(&mut self) {
+        self.buffer.clear()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +92,7 @@ pub struct MousePosState {
     pub current: PhysicalPosition<f64>,
     pub delta: PhysicalPosition<f64>,
     pub delta_avg: DeltaBuffer,
+    pub live_mouse: LiveMouse,
 }
 
 impl Default for MousePosState {
@@ -103,21 +108,29 @@ impl MousePosState {
             current: PhysicalPosition::new(0., 0.),
             delta: PhysicalPosition::new(0., 0.),
             delta_avg: DeltaBuffer::new(6),
+            live_mouse: LiveMouse::new(100.0, 100.0, 100.0, true),
         }
     }
 
-    pub fn begin_frame(&mut self, smoothing: bool) {
+    pub fn begin_frame(&mut self, settings: &Settings, frame: &FrameInfo) {
         // println!("Avg.");
         // Mouse Smoothing
-        self.delta_avg.push(self.delta);
-        if smoothing {
-            self.delta = self.delta_avg.average();
+        self.live_mouse.update(frame.delta_time);
+        if settings.mouse_halting && self.delta.x == 0.0 && self.delta.y == 0.0 {
+            self.delta_avg.clear();
+            self.delta_avg.push(self.delta);
+        } else {
+            self.delta_avg.push(self.delta);
+            if settings.mouse_smoothing {
+                self.delta = self.delta_avg.average();
+            }
         }
     }
 
     pub fn end_frame(&mut self) {
         self.previous = self.current;
         self.delta = PhysicalPosition::new(0., 0.);
+        // self.live_mouse.target_velocity = (0., 0.);
     }
 }
 
@@ -190,8 +203,8 @@ impl Input {
         self.mouse_states.entry(button).or_default().current = pressed;
     }
 
-    pub fn begin_frame(&mut self, mouse_smooothing: bool) {
-        self.mouse_pos.begin_frame(mouse_smooothing);
+    pub fn begin_frame(&mut self, settings: &Settings, frame: &FrameInfo) {
+        self.mouse_pos.begin_frame(settings, frame);
     }
 
     pub fn end_frame(&mut self) {

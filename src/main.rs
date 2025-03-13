@@ -2,7 +2,7 @@
 
 use glam::vec3;
 use pollster;
-use wgpu_learn::{framepace::AverageBuffer, modeling::modeler::Modeler, state::State};
+use wgpu_learn::{framepace::AverageBuffer, modeling::modeler::Modeler, state::State, FrameInfo};
 use std::{collections::HashMap, ops::ControlFlow, time::{Duration, Instant}};
 use image::{
     ImageBuffer, Rgba,
@@ -19,6 +19,7 @@ impl Timer {
         Self(Instant::now())
     }
 
+    /// Resets the timer and returns the [Duration].
     fn time(&mut self) -> Duration {
         let duration = self.0.elapsed();
         self.0 = Instant::now();
@@ -82,7 +83,7 @@ pub async fn run() {
         // .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
         // .with_content_protected(true)
         .build(&event_loop).unwrap();
-    
+    window.set_cursor_visible(false);
     // window.set_cursor_visible(false);
     let mut state = State::new(&window).await;
     let monitor = state.window().current_monitor().unwrap();
@@ -101,6 +102,14 @@ pub async fn run() {
     let mut avg_update_time: Option<f64> = None;
     let mut avg_render_time: Option<f64> = None;
     let mut fps_avgs = AverageBuffer::new(32);
+
+    let mut frame = FrameInfo {
+        index: 0,
+        fps: 0.0,
+        last_frame_time: Duration::from_secs(0),
+        delta_time: Duration::from_secs(0),
+    };
+    let mut loop_timer = Timer(Instant::now());
     event_loop.run(move |event, control_flow| {
         state.process_event(&event);
         match event {
@@ -130,13 +139,20 @@ pub async fn run() {
                     WindowEvent::RedrawRequested => {
                         // if focused {
                         // }
-                        state.begin_frame(frame_counter);
+                        let frame_time = loop_timer.split_time();
+                        let fps = frame_time.framerate();
+                        fps_avgs.push(fps);
+                        let avg_fps = fps_avgs.average();
+                        frame.fps = avg_fps;
+
+                        frame.delta_time = frame_time.elapsed();
+                        state.begin_frame(&frame);
                         // timer.wait(Duration::from_secs(1)/60);
                         
                         // println!("Framerate: {}", old.framerate());
                         {
                             let start_time = Timer::start();
-                            state.update(frame_counter);
+                            state.update(&frame);
                             let end_time = start_time.elapsed();
                             let secs = end_time.as_secs_f64();
                             if let Some(ref mut avg) = avg_update_time {
@@ -146,7 +162,7 @@ pub async fn run() {
                             }
                         }
 
-                        match state.render(frame_counter) {
+                        match state.render(&frame) {
                             Ok(render_time) => {
                                 let secs = render_time.as_secs_f64();
                                 if let Some(ref mut avg) = avg_render_time {
@@ -165,17 +181,12 @@ pub async fn run() {
                             }
                             Err(e) => eprintln!("Err: {e:?}"),
                         }
-                        let old = timer;
-                        let fps = timer.framerate();
-                        fps_avgs.push(fps);
-                        let avg_fps = fps_avgs.average();
-                        if (60.0 - avg_fps).abs() > 4.0 {
-                            println!("FPS: {:.0}", timer.framerate());
-                        }
+                        
 
                         let time = timer.time();
-                        state.end_frame(frame_counter);
-                        frame_counter += 1;
+                        state.end_frame(&frame);
+                        frame.last_frame_time = time;
+                        frame.index += 1;
                     }
                     _ => {}
                 }
