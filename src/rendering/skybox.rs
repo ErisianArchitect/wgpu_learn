@@ -246,7 +246,7 @@ impl Skybox {
             ],
             push_constant_ranges: &[wgpu::PushConstantRange {
                 range: 0..64,
-                stages: wgpu::ShaderStages::VERTEX,
+                stages: wgpu::ShaderStages::VERTEX_FRAGMENT,
             }],
         });
         let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -302,7 +302,7 @@ impl Skybox {
         self.cubemap.bind(0, render_pass);
 
         let inv_view_proj = camera.projection_view_matrix().inverse();
-        render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&inv_view_proj));
+        render_pass.set_push_constants(wgpu::ShaderStages::VERTEX_FRAGMENT, 0, bytemuck::bytes_of(&inv_view_proj));
         render_pass.draw(0..6, 0..1);
     }
 }

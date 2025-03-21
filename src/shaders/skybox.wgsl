@@ -15,7 +15,6 @@ var<push_constant> inv_view_proj: mat4x4<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-    @location(1) direction: vec3<f32>,
 };
 
 // const vertices: array<vec3<f32>, 8> = array<vec3<f32>, 8>(
@@ -59,7 +58,7 @@ fn vs_main(
     var out: VertexOutput;
     let vert = vertices[indices[vertex_index]];
     out.position = vec4<f32>(vert.x, vert.y, 1.0, 1.0);
-    out.direction = (inv_view_proj * out.position).xyz;
+    // out.direction = normalize((inv_view_proj * out.position).xyz);
     return out;
 }
 
@@ -70,5 +69,6 @@ fn fix_seams(direction: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(cubemap, cubemap_sampler, fix_seams(in.direction));
+    let direction = (inv_view_proj * in.position).xyz;
+    return textureSample(cubemap, cubemap_sampler, fix_seams(direction));
 }
