@@ -1,12 +1,14 @@
 use std::path::Path;
 
+use std::sync::Arc;
+
 use glam::{vec2, vec3, Vec3};
 use image::GenericImageView;
 use wgpu::util::DeviceExt;
 
 use crate::{modeling::modeler::{Modeler, PosUV}, voxel::vertex::Vertex};
 
-use super::{texture_array::TextureArray, transforms::TransformsBindGroup};
+use super::transforms::TransformsBindGroup;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SkyboxErr {
@@ -22,16 +24,18 @@ pub enum SkyboxErr {
     }
 }
 
-const SKYBOX_VERTICES: [Vec3; 4] = [
-    vec3()
-];
-
-pub struct Skybox {
+#[derive(Debug, Clone)]
+struct SkyboxInner {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     render_pipeline: wgpu::RenderPipeline,
     num_indices: u32,
     cubemap: SkyboxCubemap,
+}
+
+#[derive(Debug, Clone)]
+pub struct Skybox {
+    inner: Arc<SkyboxInner>,
 }
 
 pub struct SkyboxTexturePaths<P: AsRef<Path>> {
@@ -43,6 +47,7 @@ pub struct SkyboxTexturePaths<P: AsRef<Path>> {
     pub right: P,
 }
 
+#[derive(Debug, Clone)]
 pub struct SkyboxCubemap {
     pub cubemap: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -174,6 +179,7 @@ impl SkyboxCubemap {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct SkyboxCubemapBinding {
     pub layout: wgpu::BindGroupLayout,
     pub group: wgpu::BindGroup,
@@ -258,34 +264,22 @@ impl Skybox {
             PosUV::new(vec3(0.5, -0.5, -0.5), vec2(0.0, 0.0)),PosUV::new(vec3(-0.5, -0.5, -0.5), vec2(1.0, 0.0)),
             PosUV::new(vec3(0.5, 0.5, -0.5), vec2(0.0, 1.0)),PosUV::new(vec3(-0.5, 0.5, -0.5), vec2(1.0, 1.0)),
         ];
-        m.scale(vec3(450.0, 450.0, 450.0), |m| {
-            m.texture_index(Self::FRONT_INDEX, |m| {
+        m.texture_index(Self::FRONT_INDEX, |m| {
+            m.push_quad(&quad);
+            m.rotate_euler(glam::EulerRot::XYZ, vec3(270.0f32.to_radians(), 0.0, 0.0), |m| {
                 m.push_quad(&quad);
             });
-            m.rotate_euler(glam::EulerRot::XYZ, vec3(-90.0f32.to_radians(), 0.0, 0.0), |m| {
-                m.texture_index(Self::TOP_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
-            });
             m.rotate_euler(glam::EulerRot::XYZ, vec3(90.0f32.to_radians(), 0.0, 0.0), |m| {
-                m.texture_index(Self::BOTTOM_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
+                m.push_quad(&quad);
             });
             m.rotate_euler(glam::EulerRot::XYZ, vec3(0.0, 90.0f32.to_radians(), 0.0), |m| {
-                m.texture_index(Self::RIGHT_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
+                m.push_quad(&quad);
             });
             m.rotate_euler(glam::EulerRot::XYZ, vec3(0.0, 180.0f32.to_radians(), 0.0), |m| {
-                m.texture_index(Self::BACK_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
+                m.push_quad(&quad);
             });
-            m.rotate_euler(glam::EulerRot::XYZ, vec3(0.0, -90.0f32.to_radians(), 0.0), |m| {
-                m.texture_index(Self::LEFT_INDEX, |m| {
-                    m.push_quad(&quad);
-                });
+            m.rotate_euler(glam::EulerRot::XYZ, vec3(0.0, 270.0f32.to_radians(), 0.0), |m| {
+                m.push_quad(&quad);
             });
         });
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -359,11 +353,13 @@ impl Skybox {
         });
 
         Ok(Self {
-            vertex_buffer,
-            index_buffer,
-            render_pipeline,
-            num_indices,
-            cubemap,
+            inner: Arc::new(SkyboxInner {
+                vertex_buffer,
+                index_buffer,
+                render_pipeline,
+                num_indices,
+                cubemap,
+            })
         })
     }
 
@@ -373,14 +369,14 @@ impl Skybox {
         transforms: &TransformsBindGroup,
         camera_position: Vec3,
     ) {
-        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.set_pipeline(&self.inner.render_pipeline);
         render_pass.set_bind_group(0, &transforms.bind_group, &[]);
-        self.cubemap.bind(1, render_pass);
+        self.inner.cubemap.bind(1, render_pass);
 
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.set_vertex_buffer(0, self.inner.vertex_buffer.slice(..));
+        render_pass.set_index_buffer(self.inner.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         let world = glam::Mat4::from_translation(camera_position);
         render_pass.set_push_constants(wgpu::ShaderStages::VERTEX, 0, bytemuck::bytes_of(&world));
-        render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        render_pass.draw_indexed(0..self.inner.num_indices, 0, 0..1);
     }
 }

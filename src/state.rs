@@ -2,6 +2,7 @@
 use std::time::{Duration, Instant};
 use std::fmt::Write;
 
+use gilrs::Gilrs;
 use glam::{vec2, vec3, vec4, Vec3};
 use wgpu::{MemoryHints, MultisampleState, ShaderStages, TextureFormat};
 use wgpu::{self, util::DeviceExt};
@@ -103,9 +104,9 @@ pub struct State<'a> {
     pub camera: Camera,
     // Input State
     pub input: Input,
+    pub gamepad: Gilrs,
     pub settings: Settings,
     pub text_rend: TextRend,
-    pub skybox: Skybox,
     pub locked: bool,
     pub animation: Option<StateAnimator>,
     // pub depth_stencil: wgpu::Texture,
@@ -166,49 +167,12 @@ impl<'a> State<'a> {
             let limits = device.limits();
             println!("Push constant size limit: {}", limits.max_push_constant_size);
         }
-        // Texture Array
-        let cube_sides_dir = std::path::PathBuf::from("./assets/textures/cube_sides/");
-        let texture_array = TextureArray::from_files(
-            &device,
-            &queue,
-            &[
-                cube_sides_dir.join("diagnatiles.png"),
-                cube_sides_dir.join("diagnatiles.png"),
-                cube_sides_dir.join("diagnatiles.png"),
-                cube_sides_dir.join("diagnatiles.png"),
-                cube_sides_dir.join("diagnatiles.png"),
-                cube_sides_dir.join("diagnatiles.png"),
-                // cube_sides_dir.join("pos_y.png"),
-            ],
-            Some("Debug Texture Array"),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            wgpu::AddressMode::Repeat,
-            wgpu::AddressMode::Repeat,
-            7,
-        ).expect("Failed to load texture array.");
-        // Texture Array Bind Group
-        // let texture_array_bind_group = texture_array.bind_group(&device);
-        // Transforms
-        let transforms = TransformsBindGroup::new(&device);
-        // Camera
-        let camera = Camera::from_look_at(Vec3::new(0.0, 1.7, 0.0), Vec3::NEG_Z, 70f32.to_radians(), 0.01, 1000.0, size);
-        let view_proj_matrix = camera.projection_view_matrix();
-        // transforms.write_world(&queue, &glam::Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::IDENTITY, Vec3::ZERO));
-        transforms.write_view_projection(&queue, &view_proj_matrix);
         // Surface Caps/Format
         let surface_caps = surface.get_capabilities(&adapter);
         let surface_format = surface_caps.formats.iter()
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
-        // let surface_format = if surface_caps.formats.contains(&TextureFormat::Rgba8UnormSrgb) {
-        //     TextureFormat::Rgba8UnormSrgb
-        // } else if surface_caps.formats.contains(&TextureFormat::Bgra8UnormSrgb) {
-        //     TextureFormat::Bgra8UnormSrgb
-        // } else {
-        //     wgpu::TextureFormat::Rgba8Unorm
-        // };
-        // Config
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -220,10 +184,68 @@ impl<'a> State<'a> {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
+        // Texture Array
+        let cube_sides_dir = std::path::PathBuf::from("./assets/textures/cube_sides/");
+        let texture_array = TextureArray::from_files(
+            &device,
+            &queue,
+            &[
+                cube_sides_dir.join("gray_shulker_box.png"),
+                cube_sides_dir.join("gray_shulker_box.png"),
+                cube_sides_dir.join("gray_shulker_box.png"),
+                cube_sides_dir.join("gray_shulker_box.png"),
+                cube_sides_dir.join("gray_shulker_box.png"),
+                cube_sides_dir.join("gray_shulker_box.png"),
+                // cube_sides_dir.join("pos_y.png"),
+            ],
+            Some("Debug Texture Array"),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            wgpu::AddressMode::Repeat,
+            wgpu::AddressMode::Repeat,
+            5,
+        ).expect("Failed to load texture array.");
+        // Texture Array Bind Group
+        // let texture_array_bind_group = texture_array.bind_group(&device);
+        // Transforms
+        let transforms = TransformsBindGroup::new(&device);
+
+        let skybox_dir = std::path::PathBuf::from("./assets/textures/skyboxes/complex/");
+        let skybox = Skybox::new(
+            &device,
+            &queue,
+            &config,
+            Some("Skybox"),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            // surface_format,
+            &transforms,
+            &SkyboxTexturePaths {
+                top: skybox_dir.join("purp_top.png"),
+                bottom: skybox_dir.join("purp_bottom.png"),
+                left: skybox_dir.join("purp_left.png"),
+                right: skybox_dir.join("purp_right.png"),
+                front: skybox_dir.join("purp_front.png"),
+                back: skybox_dir.join("purp_back.png"),
+            }
+        ).expect("Failed to load skybox.");
+
+        // Camera
+        let camera = Camera::from_look_to(
+            Vec3::new(0.0, 1.7, 0.0),
+            Vec3::NEG_Z,
+            70f32.to_radians(),
+            0.01,
+            50000.0,
+            size,
+            skybox,
+        );
+        let view_proj_matrix = camera.projection_view_matrix();
+        // transforms.write_world(&queue, &glam::Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::IDENTITY, Vec3::ZERO));
+        transforms.write_view_projection(&queue, &view_proj_matrix);
+        
 
         
 
-        let fog = Fog::new(100.0, 200.0, vec4(0.0, 0.0, 0.0, 0.0));
+        let fog = Fog::new(40000.0, 50000.0, vec4(60.0, 60.0, 60.0, 0.0));
         let fog_bind_group = FogBindGroup::new(&device);
         fog_bind_group.write_fog(&queue, &fog);
 
@@ -353,24 +375,7 @@ impl<'a> State<'a> {
             }
         };
 
-        let skybox_dir = std::path::PathBuf::from("./assets/textures/skyboxes/complex/");
-        let skybox = Skybox::new(
-            &device,
-            &queue,
-            &config,
-            Some("Skybox"),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-            // surface_format,
-            &transforms,
-            &SkyboxTexturePaths {
-                top: skybox_dir.join("purp_top.png"),
-                bottom: skybox_dir.join("purp_bottom.png"),
-                left: skybox_dir.join("purp_left.png"),
-                right: skybox_dir.join("purp_right.png"),
-                front: skybox_dir.join("purp_front.png"),
-                back: skybox_dir.join("purp_back.png"),
-            }
-        ).expect("Failed to load skybox.");
+        
 
         // Depth texture
         // let (depth_stencil, depth_texture_view) = {
@@ -418,12 +423,12 @@ impl<'a> State<'a> {
             fog,
             last_time: std::time::Instant::now(),
             input: Input::default(),
+            gamepad: Gilrs::new().expect("Failed to create gamepad."),
             settings: Settings {
                 mouse_smoothing: true,
                 mouse_halting: true,
             },
             text_rend,
-            skybox,
             locked: true,
             animation: None,
             // depth_stencil,
@@ -461,6 +466,52 @@ impl<'a> State<'a> {
     pub fn close_requested(&mut self) -> bool {
         
         true
+    }
+
+    pub fn process_gamepad_event(&mut self, event: &gilrs::Event) {
+        match event.event {
+            gilrs::EventType::ButtonPressed(button, code) => {
+            },
+            gilrs::EventType::ButtonRepeated(button, code) => {
+
+            },
+            gilrs::EventType::ButtonReleased(button, code) => {
+
+            },
+            gilrs::EventType::ButtonChanged(button, t, code) => {
+                match button {
+                    gilrs::Button::LeftTrigger => {
+                        
+                    },
+                    gilrs::Button::LeftTrigger2 => {
+                        
+                    },
+                    gilrs::Button::RightTrigger => {
+                    },
+                    gilrs::Button::RightTrigger2 => {
+                        
+                        println!("{t:.4}")
+                    },
+                    _ => (),
+                }
+            },
+            gilrs::EventType::AxisChanged(axis, t, code) => {
+                
+            },
+            gilrs::EventType::Connected => {
+                
+            },
+            gilrs::EventType::Disconnected => {
+                
+            },
+            gilrs::EventType::Dropped => {
+                
+            },
+            gilrs::EventType::ForceFeedbackEffectCompleted => {
+                
+            },
+            _ => (),
+        }
     }
 
     pub fn process_event(&mut self, event: &Event<()>) {
@@ -805,7 +856,7 @@ impl<'a> State<'a> {
     }
 
     /// Called at the start of render() so that render resources can be initialized.
-    fn render_init(&mut self) {
+    fn begin_render(&mut self) {
         // Update the view/projection matrix in the transform bind group buffer.
         self.transforms.write_view_projection(&self.queue, &self.camera.projection_view_matrix());
         self.transforms.write_camera_position(&self.queue, &self.camera.position);
@@ -814,50 +865,13 @@ impl<'a> State<'a> {
 
     pub fn render(&mut self, frame: &FrameInfo) -> Result<Duration, wgpu::SurfaceError> {
         let start_time = Instant::now();
-        self.render_init();
+        self.begin_render();
 
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder")
         });
-
-        let mut viewport = Viewport::new(&self.device, &self.text_rend.cache);
-        viewport.update(&self.queue, Resolution { width: self.size.width, height: self.size.height });
-
-        let mut render_text = String::new();
-
-        writeln!(render_text, "Frame Index: {}", frame.index);
-        writeln!(render_text, "FPS: {:.0}", frame.fps);
-        if self.settings.mouse_smoothing {
-            writeln!(render_text, "Mouse Smoothing: {}", self.input.mouse_pos.delta_avg.capacity());
-            writeln!(render_text, "Mouse Halting: {}", self.settings.mouse_halting);
-        } else {
-            writeln!(render_text, "Mouse Smoothing: Off");
-        }
-        writeln!(render_text, "Animating: {}", self.animation.is_some());
-        // writeln!(render_text, "Forward: {:?}", self.camera.forward());
-
-        // self.text_rend.buffer.set_text(
-        //     &mut self.text_rend.font_system,
-        //     &render_text,
-        //     Attrs::new()
-        //         // .color(Color::rgb(255, 255, 255))
-        //         ,
-        //     glyphon::Shaping::Advanced,
-        // );
-
-        // let mut text_area = TextArea {
-        //     bounds: glyphon::TextBounds { left: 10, top: 10, right: self.size.width as i32, bottom: self.size.height as i32 },
-        //     buffer: &self.text_rend.buffer,
-        //     left: 10.0,
-        //     top: 10.0,
-        //     scale: 1.0,
-        //     default_color: Color::rgb(221, 0, 255),
-        //     custom_glyphs: &[]
-        // };
-        // self.text_rend.text_renderer.prepare(&self.device, &self.queue, &mut self.text_rend.font_system, &mut self.text_rend.text_atlas, &viewport, [text_area], &mut self.text_rend.swash_cache).expect("Failed.");
-
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -883,8 +897,7 @@ impl<'a> State<'a> {
             occlusion_query_set: None,
             timestamp_writes: None
         });
-
-        self.skybox.render(&mut render_pass, &self.transforms, self.camera.position);
+        self.camera.render(&mut render_pass, &self.transforms);
 
         // increment
         // decrement
@@ -924,7 +937,20 @@ impl<'a> State<'a> {
         // ██████████████████
         {
 
-            
+            let mut viewport = Viewport::new(&self.device, &self.text_rend.cache);
+            viewport.update(&self.queue, Resolution { width: self.size.width, height: self.size.height });
+
+            let mut render_text = String::new();
+
+            writeln!(render_text, "Frame Index: {}", frame.index);
+            writeln!(render_text, "FPS: {:.0}", frame.fps);
+            if self.settings.mouse_smoothing {
+                writeln!(render_text, "Mouse Smoothing: {}", self.input.mouse_pos.delta_avg.capacity());
+                writeln!(render_text, "Mouse Halting: {}", self.settings.mouse_halting);
+            } else {
+                writeln!(render_text, "Mouse Smoothing: Off");
+            }
+            writeln!(render_text, "Animating: {}", self.animation.is_some());
 
             self.text_rend.back_buffer.set_text(
                 &mut self.text_rend.font_system,

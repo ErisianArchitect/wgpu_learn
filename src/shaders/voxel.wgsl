@@ -119,7 +119,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let fog_interp = saturate((view_distance - fog.start) / (fog.end - fog.start));
         return mix(sample, fog.color, smoothstep(0.0, 1.0, circular_in(fog_interp)));
     } else {
-        return sample;
+        if view_distance <= 6.0 {
+            let light_interp = view_distance / 6.0;
+            // var color = mix(vec4<f32>(1.0, 1.0, 1.0, 1.0), sample, circular_in(light_interp));
+            // color.a = 1.0;
+            let brighten = mix(sample.rgb, vec3<f32>(1.0, 1.0, 1.0), 0.1);
+            let recolor = mix(brighten, sample.rgb, circular_out(light_interp));
+            return vec4<f32>(recolor, 1.0);
+        } else {
+            return sample;
+        }
     }
     // let interp = circular_out(saturate((view_distance - NEAR_DISTANCE) / (FAR_DISTANCE - NEAR_DISTANCE)));
     // let far_sample = textureSample(array_texture, array_texture_far_sampler, in.uv, in.layer);

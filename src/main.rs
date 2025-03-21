@@ -84,6 +84,17 @@ pub async fn run() {
         // .with_content_protected(true)
         .build(&event_loop).unwrap();
     window.set_cursor_visible(false);
+    {
+        let window_size = window.outer_size();
+        let screen_size = window.current_monitor().unwrap().size();
+        let window_half_size = PhysicalSize::new(window_size.width / 2, window_size.height / 2);
+        let screen_half_size = PhysicalSize::new(screen_size.width / 2, screen_size.height / 2);
+        let center_point = PhysicalPosition::new(
+            screen_half_size.width - window_half_size.width,
+            screen_half_size.height - window_half_size.height,
+        );
+        window.set_outer_position(center_point);
+    }
     // window.set_cursor_visible(false);
     let mut state = State::new(&window).await;
     let monitor = state.window().current_monitor().unwrap();
@@ -111,6 +122,9 @@ pub async fn run() {
     };
     let mut loop_timer = Timer(Instant::now());
     event_loop.run(move |event, control_flow| {
+        while let Some(event) = state.gamepad.next_event() {
+            state.process_gamepad_event(&event);
+        }
         state.process_event(&event);
         match event {
             Event::WindowEvent {

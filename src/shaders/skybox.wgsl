@@ -54,7 +54,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // let view_distance = length(in.world_pos - camera_position);
     // let interp = saturate((view_distance - NEAR_DISTANCE) / (FAR_DISTANCE - NEAR_DISTANCE));
     // let near_sample = textureSample(array_texture, array_texture_near_sampler, in.uv, in.layer);
-    let far_sample = textureSample(cubemap, cubemap_sampler, fix_seams(in.direction));
+    var dir = fix_seams(in.direction);
+    dir.y = dir.y * 5.0;
+    let far_sample = textureSample(cubemap, cubemap_sampler, dir);
     return far_sample;
     // let sample = mix(near_sample, far_sample, interp);
     // if view_distance >= fog.start {
