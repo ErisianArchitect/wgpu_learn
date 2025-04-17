@@ -263,6 +263,7 @@ impl RaytraceCamera {
 pub struct PrecomputedDirections {
     // This never needs to be accessed CPU side.
     pub directions: wgpu::Texture,
+    pub ndc_mult: wgpu::Buffer,
     pub read_bind_group: wgpu::BindGroup,
     pub read_bind_group_layout: wgpu::BindGroupLayout,
     pub compute_bind_group_layout: wgpu::BindGroupLayout,
@@ -287,7 +288,7 @@ impl PrecomputedDirections {
             view_formats: &[],
         });
         
-        let ndc_mult_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let ndc_mult = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Precompute Directions NDC Multiplier Buffer"),
             size: 8,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -367,7 +368,7 @@ impl PrecomputedDirections {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &ndc_mult_buffer,
+                        buffer: &ndc_mult,
                         offset: 0,
                         size: None,
                     }),
@@ -394,6 +395,7 @@ impl PrecomputedDirections {
 
         Self {
             directions,
+            ndc_mult,
             read_bind_group,
             compute_bind_group,
             read_bind_group_layout,
