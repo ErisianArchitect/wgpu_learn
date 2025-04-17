@@ -108,8 +108,39 @@ const FOG_END: f32 = 180.0;
 const GRAY: f32 = 0.0;
 const GRAY_RGBA: vec4<f32> = vec4<f32>(GRAY, GRAY, GRAY, 1.0);
 
+const PLAYER_LIGHT_RANGE: f32 = 16.0;
+const PLAYER_LIGHT_INTENSITY: f32 = 1.0;
+const LIGHT_COLOR: vec3<f32> = vec3<f32>(0.0, 0.5, 1.0);
+const AMBIENT_COLOR: vec3<f32> = vec3<f32>(1.0, 1.0, 1.0);
+const AMBIENT_INTENSITY: f32 = 0.1;
+const NORMAL: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
+
+const MIN_POS: f32 = 1.175494351e-38;
+const F32MAX: f32 = 3.4028235e+38;
+
+struct U64 {
+    low: u32,
+    high: u32,
+}
+
+fn get_bit(value: U64, index: u32) -> bool {
+    let low = value.low & (1u << index);
+    let high = value.high & (1u << (index ^ 32u));
+    return (low | high) != 0;
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // Uh... this code was test code, but I'm gonna leave it here for right now because I don't feel like moving it somewhere else.
+    // let bits = U64(
+    //     131072,
+    //     262144,
+    // );
+    // let low = get_bit(bits, 17);
+    // let high = get_bit(bits, 50);
+    // if low && high {
+    //     return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    // }
     let sample = textureSample(array_texture, array_texture_sampler, in.uv, in.layer);
     let view_distance = length(in.world_pos - camera_position);
     if view_distance >= fog.start {
@@ -119,16 +150,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let fog_interp = saturate((view_distance - fog.start) / (fog.end - fog.start));
         return mix(sample, fog.color, smoothstep(0.0, 1.0, circular_in(fog_interp)));
     } else {
-        if view_distance <= 6.0 {
-            let light_interp = view_distance / 6.0;
-            // var color = mix(vec4<f32>(1.0, 1.0, 1.0, 1.0), sample, circular_in(light_interp));
-            // color.a = 1.0;
-            let brighten = mix(sample.rgb, vec3<f32>(1.0, 1.0, 1.0), 0.1);
-            let recolor = mix(brighten, sample.rgb, circular_out(light_interp));
-            return vec4<f32>(recolor, 1.0);
-        } else {
-            return sample;
-        }
+        let light_dir = normalize(camera_position - in.world_pos);
+        // var atten = clamp(1.0 - (view_distance / PLAYER_LIGHT_RANGE), 0.0, 1.0);
+        var atten = 1.0 - smoothstep(0.0, PLAYER_LIGHT_RANGE, view_distance);
+        // atten = atten * atten;
+        let diffuse = max(dot(NORMAL, light_dir), 0.0);
+        let point_light = LIGHT_COLOR * PLAYER_LIGHT_INTENSITY * diffuse * atten;
+        let ambient = AMBIENT_COLOR * AMBIENT_INTENSITY;
+        let final_color = sample.rgb * (ambient + point_light);
+        return vec4<f32>(final_color, sample.a);
+        // if view_distance <= 6.0 {
+        //     let light_interp = view_distance / 6.0;
+        //     // var color = mix(vec4<f32>(1.0, 1.0, 1.0, 1.0), sample, circular_in(light_interp));
+        //     // color.a = 1.0;
+        //     let brighten = mix(sample.rgb, vec3<f32>(1.0, 1.0, 1.0), 0.1);
+        //     let recolor = mix(brighten, sample.rgb, circular_out(light_interp));
+        //     return vec4<f32>(recolor, 1.0);
+        // } else {
+        //     return sample;
+        // }
     }
     // let interp = circular_out(saturate((view_distance - NEAR_DISTANCE) / (FAR_DISTANCE - NEAR_DISTANCE)));
     // let far_sample = textureSample(array_texture, array_texture_far_sampler, in.uv, in.layer);

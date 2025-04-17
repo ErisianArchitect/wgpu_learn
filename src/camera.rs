@@ -1,5 +1,5 @@
 use glam::{
-    vec2, Mat4, Quat, Vec2, Vec3, Vec4, Vec4Swizzles
+    vec2, Mat3, Mat4, Quat, Vec2, Vec3, Vec4, Vec4Swizzles
 };
 use winit::dpi::PhysicalSize;
 
@@ -241,6 +241,10 @@ impl Camera {
 
     pub fn y_quat(&self) -> Quat {
         Quat::from_axis_angle(Vec3::Y, self.rotation.y)
+    }
+
+    pub fn rotation_matrix(&self) -> Mat3 {
+        Mat3::from_euler(glam::EulerRot::YXZ, self.rotation.y, self.rotation.x, 0.0)
     }
 
     pub fn view_matrix(&self) -> Mat4 {
