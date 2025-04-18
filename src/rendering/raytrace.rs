@@ -1,6 +1,6 @@
 use glam::*;
 use bytemuck::{NoUninit, Pod, Zeroable};
-use wgpu::util::DeviceExt;
+use wgpu::util::{DeviceExt, RenderEncoder};
 use crate::{camera::Camera, math::*};
 
 #[repr(u32)]
@@ -14,6 +14,24 @@ pub enum Face {
     NegX = 4,
     NegY = 5,
     NegZ = 6,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RayCalc {
+    mult: Vec2,
+}
+
+/// Calculates the value that you multiply the NDC coordinates by to get
+/// the ray facing direction for those NDC coordinates with the given
+/// field of view (`fov_rad`) and screen size. Screen size is the size
+/// of the rendering area. So if you had a resolution of `1920x1080`,
+/// `screen_size` would be `(1920, 1080)`.
+#[inline]
+pub fn calc_ray_mult(fov_rad: f32, screen_size: (u32, u32)) -> Vec2 {
+    let aspect_ratio = screen_size.0 as f32 / screen_size.1 as f32;
+    let tan_fov_half = (fov_rad * 0.5).tan();
+    let asp_fov = aspect_ratio * tan_fov_half;
+    vec2(asp_fov, -tan_fov_half)
 }
 
 #[inline]
@@ -165,7 +183,7 @@ pub struct RaytraceCamera {
 
 impl RaytraceCamera {
     pub fn new(camera: &Camera, device: &wgpu::Device) -> Self {
-        let gpu_cam = GpuRaytraceCamera::new(camera, 0.1, 500.0);
+        let gpu_cam = GpuRaytraceCamera::new(camera, 0.1, 1000.0);
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Raytrace Camera Buffer"),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -200,8 +218,8 @@ impl RaytraceCamera {
         }
     }
 
-    pub fn bind(&self, index: u32, render_pass: &mut wgpu::RenderPass) {
-        render_pass.set_bind_group(index, &self.bind_group, &[]);
+    pub fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_bind_group(index, &self.bind_group, &[]);
     }
 
     pub fn write_transform(&mut self, transform: GpuTransform, queue: &wgpu::Queue) {
@@ -272,7 +290,7 @@ pub struct PrecomputedDirections {
 }
 
 impl PrecomputedDirections {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device, fov: f32) -> Self {
         let directions = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Directions Storage"),
             dimension: wgpu::TextureDimension::D2,
@@ -280,19 +298,20 @@ impl PrecomputedDirections {
             mip_level_count: 1,
             sample_count: 1,
             size: wgpu::Extent3d {
-                width: 1920,
-                height: 1080,
+                width: 1920*2,
+                height: 1080*2,
                 depth_or_array_layers: 1,
             },
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
+
+        let ndc_multiplier = calc_ray_mult(fov, (1920*2, 1080*2));
         
-        let ndc_mult = device.create_buffer(&wgpu::BufferDescriptor {
+        let ndc_mult = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Precompute Directions NDC Multiplier Buffer"),
-            size: 8,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            contents: bytemuck::bytes_of(&ndc_multiplier),
         });
 
         let view = directions.create_view(&wgpu::TextureViewDescriptor {
@@ -404,13 +423,19 @@ impl PrecomputedDirections {
         }
     }
 
-    pub fn bind_read(&self, index: u32, render_pass: &mut wgpu::RenderPass) {
-        render_pass.set_bind_group(index, &self.read_bind_group, &[]);
+    pub fn compute(&self, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_pipeline(&self.compute_pipeline);
+        compute_pass.set_bind_group(0, &self.compute_bind_group, &[]);
+        compute_pass.dispatch_workgroups(240, 135, 1);
     }
 
-    pub fn bind_write(&self, index: u32, render_pass: &mut wgpu::RenderPass) {
-        render_pass.set_bind_group(index, &self.compute_bind_group, &[]);
+    pub fn bind_read(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_bind_group(index, &self.read_bind_group, &[]);
     }
+
+    // pub fn bind_write(&self, index: u32, render_pass: &mut wgpu::RenderPass) {
+    //     render_pass.set_bind_group(index, &self.compute_bind_group, &[]);
+    // }
 
     // I don't think that I need this.
     // pub fn write_buffer(&self, directions: &[GpuVec3], queue: &wgpu::Queue) {
@@ -439,8 +464,8 @@ impl GpuRaytraceResult {
             mip_level_count: 1,
             sample_count: 1,
             size: wgpu::Extent3d {
-                width: 1920,
-                height: 1080,
+                width: 1920*2,
+                height: 1080*2,
                 depth_or_array_layers: 1,
             },
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -468,7 +493,7 @@ impl GpuRaytraceResult {
             base_array_layer: 0,
             base_mip_level: 0,
             mip_level_count: None,
-            usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
+            usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING),
         });
 
         let result_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -486,7 +511,7 @@ impl GpuRaytraceResult {
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 ty: wgpu::BindingType::StorageTexture {
-                    format: wgpu::TextureFormat::Rgba8Snorm,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
                     access: wgpu::StorageTextureAccess::ReadOnly,
                     view_dimension: wgpu::TextureViewDimension::D2,
                 },
@@ -582,7 +607,11 @@ impl GpuRaytraceResult {
                 module: &render_shader,
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 entry_point: Some("fragment_main"),
-                targets: &[],
+                targets: &[Some(wgpu::ColorTargetState {
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                    format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                })],
             }),
             cache: None,
             depth_stencil: None,
@@ -611,13 +640,13 @@ impl GpuRaytraceResult {
     }
 
     #[inline]
-    pub fn bind_read(&self, index: u32, render_pass: &mut wgpu::ComputePass) {
-        render_pass.set_bind_group(index, &self.read_bind_group, &[]);
+    pub fn bind_read(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_bind_group(index, &self.read_bind_group, &[]);
     }
 
     #[inline]
-    pub fn bind_write(&self, index: u32, render_pass: &mut wgpu::ComputePass) {
-        render_pass.set_bind_group(index, &self.write_bind_group, &[]);
+    pub fn bind_write(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_bind_group(index, &self.write_bind_group, &[]);
     }
 
     #[inline]
@@ -628,18 +657,20 @@ impl GpuRaytraceResult {
     pub fn render(&self, render_pass: &mut wgpu::RenderPass) {
         render_pass.set_pipeline(&self.render_pipeline);
         self.bind_render(0, render_pass);
-        render_pass.draw_indexed(0..6, 0, 0..1);
+        render_pass.draw(0..6, 0..1);
     }
 }
 
 pub struct RaytraceChunk {
     blocks: Box<[u32]>,
+    needs_write: bool,
 }
 
 impl RaytraceChunk {
     pub fn new() -> Self {
         Self {
             blocks: (0..64*64*64).map(|_| 0u32).collect(),
+            needs_write: true,
         }
     }
 
@@ -661,6 +692,11 @@ impl RaytraceChunk {
 
         let index = ((y << 12) | (z << 6) | x) as usize;
         self.blocks[index] = id;
+        self.needs_write = true;
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self.blocks.as_ref())
     }
 }
 
@@ -671,13 +707,13 @@ pub struct GpuRaytraceChunk {
 }
 
 impl GpuRaytraceChunk {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    pub fn new(chunk: &mut RaytraceChunk, device: &wgpu::Device) -> Self {
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Raytrace Chunk Buffer"),
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            size: 64*64*64*4,
-            mapped_at_creation: false,
+            contents: chunk.as_bytes(),
         });
+        chunk.needs_write = false;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Raytrace Chunk Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -706,8 +742,8 @@ impl GpuRaytraceChunk {
         }
     }
 
-    pub fn bind(&self, index: u32, render_pass: &mut wgpu::RenderPass) {
-        render_pass.set_bind_group(index, &self.bind_group, &[]);
+    pub fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_bind_group(index, &self.bind_group, &[]);
     }
 
     pub fn write_chunk(&self, chunk: &RaytraceChunk, queue: &wgpu::Queue) {
@@ -719,26 +755,37 @@ pub struct Raytracer {
     // Result
     result: GpuRaytraceResult,
     // Chunk
-    chunk: RaytraceChunk,
+    pub chunk: RaytraceChunk,
     gpu_chunk: GpuRaytraceChunk,
-    chunk_needs_write: bool,
     // Camera
     gpu_camera: RaytraceCamera,
     // Directions
     gpu_precompute: PrecomputedDirections,
     // Pipelines
     raytrace_pipeline: wgpu::ComputePipeline,
-    precompute_ray_pipeline: wgpu::ComputePipeline,
 }
 
 impl Raytracer {
-    pub fn new(camera: &Camera, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub fn new(camera: &Camera, chunk: Option<RaytraceChunk>, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         let result = GpuRaytraceResult::new(device);
-        let chunk = RaytraceChunk::new();
-        let gpu_chunk = GpuRaytraceChunk::new(device);
+        let mut chunk = chunk.unwrap_or_else(|| RaytraceChunk::new());
+        let gpu_chunk = GpuRaytraceChunk::new(&mut chunk, device);
         gpu_chunk.write_chunk(&chunk, queue);
         let gpu_camera = RaytraceCamera::new(camera, device);
-        let gpu_precompute = PrecomputedDirections::new(device);
+        let gpu_precompute = PrecomputedDirections::new(device, camera.fov);
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Precompute Compute Pass"),
+            timestamp_writes: None,
+        });
+
+        gpu_precompute.compute(&mut compute_pass);
+        drop(compute_pass);
+        let command_buffer = encoder.finish();
+        queue.submit(Some(command_buffer));
+
         let raytrace_shader = device.create_shader_module(wgpu::include_wgsl!("../shaders/raytrace.wgsl"));
 
         let raytrace_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -759,10 +806,36 @@ impl Raytracer {
             entry_point: Some("main"),
             layout: Some(&raytrace_pipeline_layout),
         });
-        // Todo:
-        // Create precompute pipeline
-        // Create render pipeline.
-        // Create render shader.
-        todo!()
+        Self {
+            result,
+            chunk,
+            gpu_chunk,
+            gpu_camera,
+            gpu_precompute,
+            raytrace_pipeline,
+        }
     }
+
+    pub fn write_chunk(&mut self, queue: &wgpu::Queue) {
+        self.gpu_chunk.write_chunk(&self.chunk, queue);
+        self.chunk.needs_write = false;
+    }
+
+    pub fn write_camera_transform(&mut self, transform: GpuTransform, queue: &wgpu::Queue) {
+        self.gpu_camera.write_transform(transform, queue);
+    }
+
+    pub fn compute(&self, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_pipeline(&self.raytrace_pipeline);
+        self.result.bind_write(0, compute_pass);
+        self.gpu_chunk.bind(1, compute_pass);
+        self.gpu_camera.bind(2, compute_pass);
+        self.gpu_precompute.bind_read(3, compute_pass);
+        compute_pass.dispatch_workgroups(240, 135, 1);
+    }
+
+    pub fn render(&self, render_pass: &mut wgpu::RenderPass) {
+        self.result.render(render_pass);
+    }
+
 }

@@ -15,6 +15,7 @@ use crate::animation::animtimer::AnimTimer;
 use crate::camera::Camera;
 use crate::input::Input;
 use crate::modeling::modeler::Modeler;
+use crate::rendering::raytrace::{GpuMat3, GpuTransform, GpuVec3, PrecomputedDirections, RaytraceChunk, Raytracer};
 use crate::rendering::skybox::{Skybox, SkyboxTexturePaths};
 use crate::rendering::texture_array::TextureArrayBindGroup;
 use crate::voxel::vertex::Vertex;
@@ -112,6 +113,7 @@ pub struct State<'a> {
     // pub depth_stencil: wgpu::Texture,
     // pub depth_texture_view: wgpu::TextureView,
     // pub glyphon_pipeline: wgpu::RenderPipeline,
+    pub raytracer: Raytracer,
 }
 
 impl<'a> State<'a> {
@@ -141,13 +143,20 @@ impl<'a> State<'a> {
         // Device and Queue
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::PUSH_CONSTANTS,
+                required_features: wgpu::Features::PUSH_CONSTANTS | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                 required_limits: limits,
                 label: None,
                 memory_hints: MemoryHints::Performance,
             },
             None
         ).await.unwrap();
+        // adapter.request_device(
+        //     &DeviceDescriptor {
+        //         features: Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+        //         ..Default::default()
+        //     },
+        //     None,
+        // ).await
         #[cfg(debug_assertions)]
         {
             match adapter.get_info().backend {
@@ -403,6 +412,15 @@ impl<'a> State<'a> {
         //         depth_texture_view,
         //     )
         // };
+        let mut chunk = RaytraceChunk::new();
+        for i in 0..32 {
+            for z in 0+i..64-i {
+                for x in 0+i..64-i {
+                    chunk.set(x, i, z, 1);
+                }
+            }
+        }
+        let mut raytracer = Raytracer::new(&camera, Some(chunk), &device, &queue);
 
         // return
         Self {
@@ -433,6 +451,7 @@ impl<'a> State<'a> {
             animation: None,
             // depth_stencil,
             // depth_texture_view,
+            raytracer,
         }
     }
 
@@ -852,6 +871,11 @@ impl<'a> State<'a> {
         //     println!("FPS: {}", fps);
         // }
 
+        self.raytracer.write_camera_transform(GpuTransform::new(
+            GpuMat3::new(self.camera.rotation_matrix()),
+            GpuVec3::from_vec3(self.camera.position),
+        ), &self.queue);
+
         self.last_time = std::time::Instant::now();
     }
 
@@ -872,6 +896,15 @@ impl<'a> State<'a> {
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder")
         });
+
+        let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("Render Compute Pass"),
+            timestamp_writes: None,
+        });
+
+        self.raytracer.compute(&mut compute_pass);
+
+        drop(compute_pass);
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -901,10 +934,10 @@ impl<'a> State<'a> {
 
         // increment
         // decrement
-        render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.set_bind_group(0, &self.transforms.bind_group, &[]);
-        render_pass.set_bind_group(1, &self.texture_array.bind_group.bind_group, &[]);
-        render_pass.set_bind_group(2, &self.fog_bind_group.bind_group, &[]);
+        // render_pass.set_pipeline(&self.render_pipeline);
+        // render_pass.set_bind_group(0, &self.transforms.bind_group, &[]);
+        // render_pass.set_bind_group(1, &self.texture_array.bind_group.bind_group, &[]);
+        // render_pass.set_bind_group(2, &self.fog_bind_group.bind_group, &[]);
 
         // const LOCS: &'static [Vec3] = &[
         //     vec3(-1., 0., -1.), vec3(0., 0., -1.), vec3(1., 0., -1.),
@@ -915,20 +948,22 @@ impl<'a> State<'a> {
         // let mat1 = glam::Mat4::IDENTITY;
         // let mat2 = glam::Mat4::from_scale_rotation_translation(Vec3::ONE, Quat::IDENTITY, Vec3::X);
         // let mat2 = glam::Mat4::from_translation(Vec3::X);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+        // render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        // render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
         // for &loc in LOCS.iter() {
         //     let world = glam::Mat4::from_translation(loc);
         //     render_pass.set_push_constants(ShaderStages::VERTEX, 0, bytemuck::bytes_of(&world));
         //     render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         // }
-        for z in -64..64 {
-            for x in -64..64 {
-                let world = glam::Mat4::from_translation(Vec3::new(x as f32 * 16.0, 0.0, z as f32 * 16.0));
-                render_pass.set_push_constants(ShaderStages::VERTEX, 0, bytemuck::bytes_of(&world));
-                render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
-            }
-        }
+        // for z in -64..64 {
+        //     for x in -64..64 {
+        //         let world = glam::Mat4::from_translation(Vec3::new(x as f32 * 16.0, 0.0, z as f32 * 16.0));
+        //         render_pass.set_push_constants(ShaderStages::VERTEX, 0, bytemuck::bytes_of(&world));
+        //         render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+        //     }
+        // }
+
+        self.raytracer.render(&mut render_pass);
         
         // ██████████████████
         // █                █

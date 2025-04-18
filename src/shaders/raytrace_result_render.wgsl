@@ -1,7 +1,7 @@
 @group(0) @binding(0)
-var render_texture: texture_2d<f32>,
+var render_texture: texture_2d<f32>;
 @group(0) @binding(1)
-var render_texture_sampler: sampler,
+var render_texture_sampler: sampler;
 
 struct Vertex {
     pos: vec2<f32>,
@@ -28,7 +28,7 @@ fn vertex_main(
 ) -> VertexOutput {
     let vertex = VERTICES[INDICES[vi]];
     var out: VertexOutput;
-    out.pos = vec4<f32>(vertex.pos, 0.0, 1.0);
+    out.clip_position = vec4<f32>(vertex.pos, 0.0, 1.0);
     out.uv = vertex.uv;
     return out;
 }
