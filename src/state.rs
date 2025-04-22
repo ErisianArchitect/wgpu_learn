@@ -16,7 +16,7 @@ use crate::camera::Camera;
 use crate::input::Input;
 use crate::math::average::{AverageBuffer, AvgBuffer};
 use crate::modeling::modeler::Modeler;
-use crate::rendering::raytrace::{GpuMat3, GpuTransform, GpuVec3, PrecomputedDirections, RaytraceChunk, Raytracer};
+use crate::rendering::raytrace::{AmbientLight, DirectionalLight, GpuMat3, GpuTransform, GpuVec3, Lighting, PrecomputedDirections, RaytraceChunk, Raytracer};
 use crate::rendering::reticle::Reticle;
 use crate::rendering::skybox::{Skybox, SkyboxTexturePaths};
 use crate::rendering::texture_array::TextureArrayBindGroup;
@@ -445,7 +445,20 @@ impl<'a> State<'a> {
                 }
             }
         }
-        let mut raytracer = Raytracer::new(&camera, Some(chunk), &device, &queue);
+        let mut raytracer = Raytracer::new(&device, &queue, &camera, Some(chunk), &Lighting {
+            directional: DirectionalLight {
+                color: Vec3::ONE,
+                direction: vec3(1.0, -4.0, 2.0).normalize(),
+                intensity: 0.7,
+                shadow: 0.2,
+                active: true,
+            },
+            ambient: AmbientLight {
+                color: Vec3::ONE,
+                intensity: 0.3,
+                active: true,
+            }
+        });
         let raytrace_timer = AverageBuffer::<Duration>::new(1000, None);
         let reticle = match Reticle::new(&device, &queue, "assets/textures/reticles/crosshair118.png", &config) {
             Ok(reticle) => reticle,
@@ -780,6 +793,10 @@ impl<'a> State<'a> {
 
         if self.input.key_just_pressed(KeyCode::KeyB) {
             println!("{:.5}, {:.5}", ray.dir.length(), ray.invert_dir().dir.length());
+        }
+
+        if self.input.key_just_pressed(KeyCode::KeyL) {
+            self.raytracer.gpu_lighting.set_directional_direction(&self.queue, ray.dir.into());
         }
 
         if self.input.mouse_just_pressed(MouseButton::Left) {

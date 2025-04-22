@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use glam::*;
 use bytemuck::{NoUninit, Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -1167,6 +1169,210 @@ impl GpuRaytraceChunk {
     }
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, NoUninit)]
+pub struct RtDirectionalLight {
+    direction: Vec3,
+    _pad0: [u8; 4],
+    color: Vec3,
+    _pad1: [u8; 4],
+    intensity: f32,
+    shadow: f32,
+    active: bool,
+    _pad2: [u8; 7],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, NoUninit)]
+pub struct RtAmbientLight {
+    color: Vec3,
+    _pad0: [u8; 4],
+    intensity: f32,
+    active: bool,
+    _pad1: [u8; 11],
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, NoUninit)]
+pub struct RtLighting {
+    directional: RtDirectionalLight,
+    ambient: RtAmbientLight,
+}
+
+pub struct GpuRtLighting {
+    lighting: RefCell<RtLighting>,
+    buffer: wgpu::Buffer,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+}
+
+pub struct DirectionalLight {
+    pub direction: Vec3,
+    pub color: Vec3,
+    pub intensity: f32,
+    pub shadow: f32,
+    pub active: bool,
+}
+
+pub struct AmbientLight {
+    pub color: Vec3,
+    pub intensity: f32,
+    pub active: bool,
+}
+
+pub struct Lighting {
+    pub directional: DirectionalLight,
+    pub ambient: AmbientLight,
+}
+
+impl GpuRtLighting {
+    pub fn new(device: &wgpu::Device, lighting: &Lighting) -> Self {
+        let rt_light = RtLighting {
+            directional: RtDirectionalLight {
+                direction: lighting.directional.direction,
+                color: lighting.directional.color,
+                intensity: lighting.directional.intensity,
+                shadow: lighting.directional.shadow,
+                active: lighting.directional.active,
+                _pad0: padding(),
+                _pad1: padding(),
+                _pad2: padding(),
+            },
+            ambient: RtAmbientLight {
+                color: lighting.ambient.color,
+                intensity: lighting.ambient.intensity,
+                active: lighting.ambient.active,
+                _pad0: padding(),
+                _pad1: padding(),
+            },
+        };
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("GPU Lighting Buffer"),
+            usage: wgpu::BufferUsages::UNIFORM,
+            contents: bytemuck::bytes_of(&rt_light),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("GPU Lighting Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    count: None,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        min_binding_size: None,
+                        has_dynamic_offset: false,
+                        ty: wgpu::BufferBindingType::Uniform,
+                    }
+                }
+            ]
+        });
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("GPU Lighting Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                }
+            ]
+        });
+
+        Self {
+            lighting: RefCell::new(rt_light),
+            buffer,
+            bind_group_layout,
+            bind_group,
+        }
+
+    }
+
+    pub fn set_directional_direction(&self, queue: &wgpu::Queue, direction: Vec3) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.directional.direction = direction;
+        queue.write_buffer(&self.buffer, 0, bytemuck::bytes_of(&direction));
+    }
+
+    pub fn get_directional_direction(&self) -> Vec3 {
+        self.lighting.borrow().directional.direction
+    }
+
+    pub fn set_directional_color(&self, queue: &wgpu::Queue, color: Vec3) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.directional.color = color;
+        queue.write_buffer(&self.buffer, 16, bytemuck::bytes_of(&color));
+    }
+
+    pub fn get_directional_color(&self) -> Vec3 {
+        self.lighting.borrow().directional.color
+    }
+
+    pub fn set_directional_intensity(&self, queue: &wgpu::Queue, intensity: f32) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.directional.intensity = intensity;
+        queue.write_buffer(&self.buffer, 32, bytemuck::bytes_of(&intensity));
+    }
+
+    pub fn get_directional_intensity(&self) -> f32 {
+        self.lighting.borrow().directional.intensity
+    }
+
+    pub fn set_shadow(&self, queue: &wgpu::Queue, shadow: f32) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.directional.shadow = shadow;
+        queue.write_buffer(&self.buffer, 36, bytemuck::bytes_of(&shadow));
+    }
+
+    pub fn get_shadow(&self) -> f32 {
+        self.lighting.borrow().directional.shadow
+    }
+
+    pub fn set_directional_active(&self, queue: &wgpu::Queue, active: bool) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.directional.active = active;
+        queue.write_buffer(&self.buffer, 40, bytemuck::bytes_of(&active));
+    }
+
+    pub fn get_directional_active(&self) -> bool {
+        self.lighting.borrow().directional.active
+    }
+
+    pub fn set_ambient_color(&self, queue: &wgpu::Queue, color: Vec3) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.ambient.color = color;
+        queue.write_buffer(&self.buffer, 48, bytemuck::bytes_of(&color));
+    }
+
+    pub fn get_ambient_color(&self) -> Vec3 {
+        self.lighting.borrow().ambient.color
+    }
+
+    pub fn set_ambient_intensity(&self, queue: &wgpu::Queue, intensity: f32) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.ambient.intensity = intensity;
+        queue.write_buffer(&self.buffer, 64, bytemuck::bytes_of(&intensity));
+    }
+
+    pub fn get_ambient_intensity(&self) -> f32 {
+        self.lighting.borrow().ambient.intensity
+    }
+
+    pub fn set_ambient_active(&self, queue: &wgpu::Queue, active: bool) {
+        let mut lighting = self.lighting.borrow_mut();
+        lighting.ambient.active = active;
+        queue.write_buffer(&self.buffer, 68, bytemuck::bytes_of(&active));
+    }
+
+    pub fn get_abmient_active(&self) -> bool {
+        self.lighting.borrow().ambient.active
+    }
+
+    fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+        compute_pass.set_bind_group(index, &self.bind_group, &[]);
+    }
+}
+
 pub struct Raytracer {
     // Result
     result: GpuRaytraceResult,
@@ -1177,12 +1383,14 @@ pub struct Raytracer {
     gpu_camera: RaytraceCamera,
     // Directions
     gpu_precompute: PrecomputedDirections,
+    // Lighting
+    pub gpu_lighting: GpuRtLighting,
     // Pipelines
     raytrace_pipeline: wgpu::ComputePipeline,
 }
 
 impl Raytracer {
-    pub fn new(camera: &Camera, chunk: Option<RaytraceChunk>, device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, camera: &Camera, chunk: Option<RaytraceChunk>, lighting: &Lighting) -> Self {
         let result = GpuRaytraceResult::new(device);
         let mut chunk = chunk.unwrap_or_else(|| RaytraceChunk::new());
         let gpu_chunk = GpuRaytraceChunk::new(&mut chunk, device);
@@ -1190,6 +1398,7 @@ impl Raytracer {
         let mut gpu_camera = RaytraceCamera::new(camera, device);
         gpu_camera.write_dimensions(1920, 1080, queue);
         let gpu_precompute = PrecomputedDirections::new(device, camera.fov);
+        let gpu_lighting = GpuRtLighting::new(device, lighting);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
@@ -1212,6 +1421,7 @@ impl Raytracer {
                 &gpu_chunk.bind_group_layout,
                 &gpu_camera.bind_group_layout,
                 &gpu_precompute.read_bind_group_layout,
+                &gpu_lighting.bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -1229,6 +1439,7 @@ impl Raytracer {
             gpu_chunk,
             gpu_camera,
             gpu_precompute,
+            gpu_lighting,
             raytrace_pipeline,
         }
     }
@@ -1248,9 +1459,10 @@ impl Raytracer {
     pub fn compute(&self, compute_pass: &mut wgpu::ComputePass) {
         compute_pass.set_pipeline(&self.raytrace_pipeline);
         self.result.bind_write(0, compute_pass);
-        self.gpu_chunk.bind(1, compute_pass);
-        self.gpu_camera.bind(2, compute_pass);
-        self.gpu_precompute.bind_read(3, compute_pass);
+        self.gpu_precompute.bind_read(1, compute_pass);
+        self.gpu_chunk.bind(2, compute_pass);
+        self.gpu_camera.bind(3, compute_pass);
+        self.gpu_lighting.bind(4, compute_pass);
         compute_pass.dispatch_workgroups(240, 135, 1);
     }
 

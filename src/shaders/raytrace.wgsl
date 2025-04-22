@@ -2,22 +2,36 @@
 // 1mib
 
 @group(0) @binding(0) var raycast_result: texture_storage_2d<rgba8unorm, write>;
-@group(1) @binding(0) var<storage, read> voxel_chunk: array<u32>;
-@group(2) @binding(0) var<uniform> camera: Camera;
-@group(3) @binding(0) var directions: texture_storage_2d<rgba32float, read>;
+@group(1) @binding(0) var directions: texture_storage_2d<rgba32float, read>;
+@group(2) @binding(0) var<storage, read> voxel_chunk: array<u32>;
+@group(3) @binding(0) var<uniform> camera: Camera;
+@group(4) @binding(0) var<uniform> lighting: Lighting;
 
-// struct DirectionalLight {
-//     inverse_direction: vec3<f32>,
-//     color: vec3<f32>,
-//     intensity: f32,
-//     shadow: f32,
-//     active: bool,
-// }
+// Size: 48
+struct DirectionalLight {
+    direction: vec3<f32>, // 0..12
+    // 4 bytes padding
+    color: vec3<f32>,     // 16..28
+    // 4 bytes padding
+    intensity: f32,       // 32..36
+    shadow: f32,          // 36..40
+    on: bool,         // 40..44
+    // 4 bytes padding
+}
 
+// Size: 32
+struct AmbientLight {
+    color: vec3<f32>, // 0..12
+    // 4 bytes padding
+    intensity: f32,           // 16..20
+    on: bool,             // 20..24
+    // 8 bytes padding
+}
+
+// Size: 80
 struct Lighting {
-    light_ray_direction: vec3<f32>,
-    // 4 pad bytes
-    
+    directional: DirectionalLight, //  0..48
+    ambient: AmbientLight,         // 48..80
 }
 
 const LIGHTDIR: vec3<f32> = vec3<f32>(1.0, -2.0, 5.0);
@@ -42,7 +56,8 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
     if any(global_id.xy > SCREENSIZE) {
         return;
     }
-    textureStore(raycast_result, global_id.xy, trace_color(global_id.xy));
+    let color = trace_color(global_id.xy);
+    textureStore(raycast_result, global_id.xy, color);
 }
 
 fn trace_color(texel: vec2<u32>) -> vec4<f32> {
@@ -121,10 +136,12 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
         if detect_edge(face_fract) {
             color *= 0.1;
         }
-        let light_ray = Ray(hit_point, normalize(INVLIGHTDIR));
-        let light_hit = raycast(light_ray, 0.0, 112.0);
-        if light_hit.hit {
-            color *= 0.02;
+        if lighting.directional.on {
+            let light_ray = Ray(hit_point, -lighting.directional.direction);
+            let light_hit = raycast(light_ray, 0.0, 112.0);
+            if light_hit.hit {
+                color *= 0.02;
+            }
         }
     }
     return vec4<f32>(color, alpha);
