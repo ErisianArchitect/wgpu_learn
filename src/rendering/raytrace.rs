@@ -1,20 +1,7 @@
 use glam::*;
 use bytemuck::{NoUninit, Pod, Zeroable};
-use wgpu::util::{DeviceExt, RenderEncoder};
-use crate::{camera::Camera, math::*};
-
-#[repr(u32)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, NoUninit)]
-pub enum Face {
-    #[default]
-    None = 0,
-    PosX = 1,
-    PosY = 2,
-    PosZ = 3,
-    NegX = 4,
-    NegY = 5,
-    NegZ = 6,
-}
+use wgpu::util::DeviceExt;
+use crate::{camera::Camera, math::{ray::Ray3, *}};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RayCalc {
@@ -39,17 +26,17 @@ pub const fn padding<const SIZE: usize>() -> [u8; SIZE] {
     [0u8; SIZE]
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, NoUninit)]
-pub struct RayHit {
-    pub coord: IVec3,
-    _coord_pad: [u8; 4],
-    pub distance: f32,
-    pub id: u32,
-    pub face: Face,
-    pub hit: bool,
-    _hit_pad: [u8; 3],
-}
+// #[repr(C)]
+// #[derive(Debug, Clone, Copy, NoUninit)]
+// pub struct RayHit {
+//     pub coord: IVec3,
+//     _coord_pad: [u8; 4],
+//     pub distance: f32,
+//     pub id: u32,
+//     pub face: Face,
+//     pub hit: bool,
+//     _hit_pad: [u8; 3],
+// }
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy, NoUninit)]
@@ -298,15 +285,15 @@ impl PrecomputedDirections {
             mip_level_count: 1,
             sample_count: 1,
             size: wgpu::Extent3d {
-                width: 1920*2,
-                height: 1080*2,
+                width: 1920,
+                height: 1080,
                 depth_or_array_layers: 1,
             },
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
 
-        let ndc_multiplier = calc_ray_mult(fov, (1920*2, 1080*2));
+        let ndc_multiplier = calc_ray_mult(fov, (1920, 1080));
         
         let ndc_mult = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Precompute Directions NDC Multiplier Buffer"),
@@ -426,7 +413,7 @@ impl PrecomputedDirections {
     pub fn compute(&self, compute_pass: &mut wgpu::ComputePass) {
         compute_pass.set_pipeline(&self.compute_pipeline);
         compute_pass.set_bind_group(0, &self.compute_bind_group, &[]);
-        compute_pass.dispatch_workgroups(240, 135, 1);
+        compute_pass.dispatch_workgroups(120, 68, 1);
     }
 
     pub fn bind_read(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
@@ -441,6 +428,162 @@ impl PrecomputedDirections {
     // pub fn write_buffer(&self, directions: &[GpuVec3], queue: &wgpu::Queue) {
     //     queue.write_buffer(&self.directions, 0, bytemuck::cast_slice(directions));
     // }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Axis {
+    X,
+    Y,
+    Z,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Face {
+    PosX = 0,
+    PosY = 1,
+    PosZ = 2,
+    NegX = 3,
+    NegY = 4,
+    NegZ = 5,
+}
+
+impl Face {
+    #[inline]
+    pub fn axis(self) -> Axis {
+        match self {
+            Face::PosX | Face::NegX => Axis::X,
+            Face::PosY | Face::NegY => Axis::Y,
+            Face::PosZ | Face::NegZ => Axis::Z,
+        }
+    }
+
+    #[inline]
+    pub const fn normal(self) -> Vec3A {
+        match self {
+            Face::PosX => Vec3A::X,
+            Face::PosY => Vec3A::Y,
+            Face::PosZ => Vec3A::Z,
+            Face::NegX => Vec3A::NEG_X,
+            Face::NegY => Vec3A::NEG_Y,
+            Face::NegZ => Vec3A::NEG_Z,
+        }
+    }
+
+    pub fn from_direction(dir: Vec3A) -> Self {
+        let abs = dir.abs();
+        if abs.x >= abs.y {
+            if abs.x >= abs.z {
+                if dir.x.is_sign_negative() {
+                    Face::NegX
+                } else {
+                    Face::PosX
+                }
+            } else {
+                if dir.z.is_sign_negative() {
+                    Face::NegZ
+                } else {
+                    Face::PosZ
+                }
+            }
+        } else {
+            if abs.y >= abs.z {
+                if dir.y.is_sign_negative() {
+                    Face::NegY
+                } else {
+                    Face::PosY
+                }
+            } else {
+                if dir.z.is_sign_negative() {
+                    Face::NegZ
+                } else {
+                    Face::PosZ
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn index(self) -> usize {
+        self as usize
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RayHit {
+    pub coord: IVec3,
+    pub id: u32,
+    pub face: Option<Face>,
+    pub distance: f32,
+}
+
+impl RayHit {
+    #[inline(always)]
+    pub fn hit_face(coord: IVec3, distance: f32, id: u32, face: Face) -> Self {
+        Self {
+            coord,
+            distance,
+            id,
+            face: Some(face),
+        }
+    }
+
+    #[inline(always)]
+    pub fn hit_cell(coord: IVec3, id: u32, distance: f32) -> Self {
+        Self {
+            coord,
+            distance,
+            id,
+            face: None,
+        }
+    }
+
+    #[inline(always)]
+    pub fn get_hit_point(&self, ray: Ray3, face: Face) -> Vec3A {
+        let point = ray.point_on_ray(self.distance);
+        let pre_hit = match face {
+            Face::PosX => ivec3(self.coord.x + 1, self.coord.y, self.coord.z),
+            Face::PosY => ivec3(self.coord.x, self.coord.y + 1, self.coord.z),
+            Face::PosZ => ivec3(self.coord.x, self.coord.y, self.coord.z + 1),
+            Face::NegX => ivec3(self.coord.x - 1, self.coord.y, self.coord.z),
+            Face::NegY => ivec3(self.coord.x, self.coord.y - 1, self.coord.z),
+            Face::NegZ => ivec3(self.coord.x, self.coord.y, self.coord.z - 1),
+        };
+        let pre_hit = pre_hit.as_vec3a();
+        const SMIDGEN: Vec3A = Vec3A::splat(1e-3);
+        const UNSMIDGEN: Vec3A = Vec3A::splat(1.0-1e-3);
+        // sometimes the hit-point is in the wrong cell (if it goes too far)
+        // so you want to bring it back into the correct cell.
+        let min = pre_hit + SMIDGEN;
+        let max = pre_hit + UNSMIDGEN;
+        // point.max(min).min(max)
+        point.clamp(min, max)
+    }
+
+    pub fn get_hit_cell(&self) -> IVec3 {
+        let mut coord = self.coord;
+        match self.face {
+            Some(Face::NegX) => {
+                coord.x -= 1;
+            }
+            Some(Face::NegY) => {
+                coord.y -= 1;
+            }
+            Some(Face::NegZ) => {
+                coord.z -= 1;
+            }
+            Some(Face::PosX) => {
+                coord.x += 1;
+            }
+            Some(Face::PosY) => {
+                coord.y += 1;
+            }
+            Some(Face::PosZ) => {
+                coord.z += 1;
+            }
+            None => ()
+        }
+        coord
+    }
 }
 
 pub struct GpuRaytraceResult {
@@ -464,8 +607,8 @@ impl GpuRaytraceResult {
             mip_level_count: 1,
             sample_count: 1,
             size: wgpu::Extent3d {
-                width: 1920*2,
-                height: 1080*2,
+                width: 1920,
+                height: 1080,
                 depth_or_array_layers: 1,
             },
             usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -500,9 +643,9 @@ impl GpuRaytraceResult {
             label: Some("Raytrace Result Render Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::FilterMode::Nearest,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
 
@@ -565,7 +708,7 @@ impl GpuRaytraceResult {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     count: None,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     visibility: wgpu::ShaderStages::FRAGMENT,
                 },
             ]
@@ -698,6 +841,279 @@ impl RaytraceChunk {
     fn as_bytes(&self) -> &[u8] {
         bytemuck::cast_slice(self.blocks.as_ref())
     }
+
+    pub fn raycast(&self, ray: Ray3, max_distance: f32) -> Option<RayHit> {
+        let mut ray = ray;
+        let lt = ray.pos.cmplt(Vec3A::ZERO);
+        const SIXTY_FOUR: Vec3A = Vec3A::splat(64.0);
+        let ge = ray.pos.cmpge(SIXTY_FOUR);
+        let outside = lt | ge;
+        let (step, delta_min, delta_max, delta_add) = if outside.any() {
+            // Calculate entry point (if there is one).
+            // calculate distance to cross each plane
+            let sign = ray.dir.signum();
+            let step = sign.as_ivec3();
+
+            let neg_sign = sign.cmplt(Vec3A::ZERO);
+            let pos_sign = sign.cmpgt(Vec3A::ZERO);
+
+            if ((lt & neg_sign) | (ge & pos_sign)).any() {
+                return None;
+            }
+            // if lt.test(0) && step.x < 0 // 4
+            // || lt.test(1) && step.y < 0 // 5 9
+            // || lt.test(2) && step.z < 0 // 5 14
+            // || ge.test(0) && step.x > 0 // 5 19
+            // || ge.test(1) && step.y > 0 // 5 24
+            // || ge.test(2) && step.z > 0 {// 5 29
+            //     return None;
+            // }
+            let (dx_min, dx_max) = match step.x + 1 {
+                0 => {
+                    (
+                        (ray.pos.x - 64.0) / -ray.dir.x,
+                        ray.pos.x / -ray.dir.x,
+                    )
+                }
+                1 => {
+                    (<f32>::NEG_INFINITY, <f32>::INFINITY)
+                }
+                2 => {
+                    (
+                        -ray.pos.x / ray.dir.x,
+                        (64.0 - ray.pos.x) / ray.dir.x,
+                    )
+                }
+                _ => unreachable!(),
+            };
+            let (dy_min, dy_max) = match step.y + 1 {
+                0 => {
+                    (
+                        (ray.pos.y - 64.0) / -ray.dir.y,
+                        ray.pos.y / -ray.dir.y,
+                    )
+                }
+                1 => {
+                    (<f32>::NEG_INFINITY, <f32>::INFINITY)
+                }
+                2 => {
+                    (
+                        -ray.pos.y / ray.dir.y,
+                        (64.0 - ray.pos.y) / ray.dir.y,
+                    )
+                }
+                _ => unreachable!()
+            };
+            let (dz_min, dz_max) = match step.z + 1 {
+                0 => {
+                    (
+                        (ray.pos.z - 64.0) / -ray.dir.z,
+                        ray.pos.z / -ray.dir.z,
+                    )
+                }
+                1 => {
+                    (<f32>::NEG_INFINITY, <f32>::INFINITY)
+                }
+                2 => {
+                    (
+                        -ray.pos.z / ray.dir.z,
+                        (64.0 - ray.pos.z) / ray.dir.z,
+                    )
+                }
+                _ => unreachable!()
+            };
+            let max_min = dx_min.max(dy_min.max(dz_min));
+            let min_max = dx_max.min(dy_max.min(dz_max));
+            // Early return, the ray does not hit the volume.
+            if max_min >= min_max {
+                return None;
+            }
+            // This is needed to penetrate the ray into the bounding box.
+            // Otherwise you'll get weird circles from the rays popping
+            // in and out of the next cell. This ensures that the ray
+            // will be inside the bounding box.
+            const RAY_PENETRATION: f32 = 1e-5;
+            let delta_add = max_min + RAY_PENETRATION;
+            if delta_add >= max_distance {
+                return None;
+            }
+            ray.pos = ray.pos + ray.dir * delta_add;
+            (
+                step,
+                Some(vec3(dx_min, dy_min, dz_min)),
+                vec3(dx_max, dy_max, dz_max),
+                delta_add,
+            )
+        } else {
+            let sign = ray.dir.signum();
+            let step = sign.as_ivec3();
+            let dx_max = match step.x + 1 {
+                0 => {
+                    ray.pos.x / -ray.dir.x
+                }
+                1 => {
+                    <f32>::INFINITY
+                }
+                2 => {
+                    (64.0 - ray.pos.x) / ray.dir.x
+                }
+                _ => unreachable!()
+            };
+            let dy_max = match step.y + 1 {
+                0 => {
+                    ray.pos.y / -ray.dir.y
+                }
+                1 => {
+                    <f32>::INFINITY
+                }
+                2 => {
+                    (64.0 - ray.pos.y) / ray.dir.y
+                }
+                _ => unreachable!()
+            };
+            let dz_max = match step.z + 1{
+                0 => {
+                    ray.pos.z / -ray.dir.z
+                }
+                1 => {
+                    <f32>::INFINITY
+                }
+                2 => {
+                    (64.0 - ray.pos.z) / ray.dir.z
+                }
+                _ => unreachable!()
+            };
+            (
+                step,
+                None,
+                vec3(dx_max, dy_max, dz_max),
+                0.0,
+            )
+        };
+        #[inline(always)]
+        fn calc_delta(mag: f32) -> f32 {
+            1.0 / mag.abs().max(<f32>::MIN_POSITIVE)
+        }
+        let delta = vec3(
+            calc_delta(ray.dir.x),
+            calc_delta(ray.dir.y),
+            calc_delta(ray.dir.z),
+        );
+
+        let face = (
+            if step.x >= 0 {
+                Face::NegX
+            } else {
+                Face::PosX
+            },
+            if step.y >= 0 {
+                Face::NegY
+            } else {
+                Face::PosY
+            },
+            if step.z >= 0 {
+                Face::NegZ
+            } else {
+                Face::PosZ
+            },
+        );
+
+        let fract = ray.pos.fract();
+
+        #[inline(always)]
+        fn calc_t_max(step: i32, fract: f32, mag: f32) -> f32 {
+            if step > 0 {
+                (1.0 - fract) / mag.abs().max(<f32>::MIN_POSITIVE)
+            } else if step < 0 {
+                fract / mag.abs().max(<f32>::MIN_POSITIVE)
+            } else {
+                <f32>::INFINITY
+            }
+        }
+        let mut t_max = vec3(
+            calc_t_max(step.x, fract.x, ray.dir.x) + delta_add,
+            calc_t_max(step.y, fract.y, ray.dir.y) + delta_add,
+            calc_t_max(step.z, fract.z, ray.dir.z) + delta_add,
+        );
+
+        let mut cell = ray.pos.floor().as_ivec3();
+        let id = self.get(cell.x, cell.y, cell.z);
+        if id != 0 {
+            return Some(RayHit {
+                face: delta_min.map(|min| {
+                    if min.x >= min.y {
+                        if min.x >= min.z {
+                            face.0
+                        } else {
+                            face.2
+                        }
+                    } else {
+                        if min.y >= min.z {
+                            face.1
+                        } else {
+                            face.2
+                        }
+                    }
+                }),
+                id,
+                coord: cell,
+                distance: delta_add,
+            });
+        }
+        let max_d = vec3a(
+            delta_max.x.min(max_distance),
+            delta_max.y.min(max_distance),
+            delta_max.z.min(max_distance),
+        );
+        loop {
+
+            if t_max.x <= t_max.y {
+                if t_max.x <= t_max.z {
+                    if t_max.x >= max_d.x {
+                        return None;
+                    }
+                    cell.x += step.x;
+                    let id = self.get(cell.x, cell.y, cell.z);
+                    if id != 0 {
+                        return Some(RayHit::hit_face(cell, t_max.x, id, face.0));
+                    }
+                    t_max.x += delta.x;
+                } else {
+                    if t_max.z >= max_d.z {
+                        return None;
+                    }
+                    cell.z += step.z;
+                    let id = self.get(cell.x, cell.y, cell.z);
+                    if id != 0 {
+                        return Some(RayHit::hit_face(cell, t_max.z, id, face.2));
+                    }
+                    t_max.z += delta.z;
+                }
+            } else {
+                if t_max.y <= t_max.z {
+                    if t_max.y >= max_d.y {
+                        return None;
+                    }
+                    cell.y += step.y;
+                    let id = self.get(cell.x, cell.y, cell.z);
+                    if id != 0 {
+                        return Some(RayHit::hit_face(cell, t_max.y, id, face.1));
+                    }
+                    t_max.y += delta.y;
+                } else {
+                    if t_max.z >= max_d.z {
+                        return None;
+                    }
+                    cell.z += step.z;
+                    let id = self.get(cell.x, cell.y, cell.z);
+                    if id != 0 {
+                        return Some(RayHit::hit_face(cell, t_max.z, id, face.2));
+                    }
+                    t_max.z += delta.z;
+                }
+            }
+        }
+    }
 }
 
 pub struct GpuRaytraceChunk {
@@ -728,7 +1144,7 @@ impl GpuRaytraceChunk {
             }]
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Raytrace Chunkn Group"),
+            label: Some("Raytrace Chunk Group"),
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -771,7 +1187,8 @@ impl Raytracer {
         let mut chunk = chunk.unwrap_or_else(|| RaytraceChunk::new());
         let gpu_chunk = GpuRaytraceChunk::new(&mut chunk, device);
         gpu_chunk.write_chunk(&chunk, queue);
-        let gpu_camera = RaytraceCamera::new(camera, device);
+        let mut gpu_camera = RaytraceCamera::new(camera, device);
+        gpu_camera.write_dimensions(1920, 1080, queue);
         let gpu_precompute = PrecomputedDirections::new(device, camera.fov);
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
@@ -817,6 +1234,9 @@ impl Raytracer {
     }
 
     pub fn write_chunk(&mut self, queue: &wgpu::Queue) {
+        if !self.chunk.needs_write {
+            return;
+        }
         self.gpu_chunk.write_chunk(&self.chunk, queue);
         self.chunk.needs_write = false;
     }

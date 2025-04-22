@@ -14,8 +14,10 @@ use winit::{event::WindowEvent, window::Window};
 use crate::animation::animtimer::AnimTimer;
 use crate::camera::Camera;
 use crate::input::Input;
+use crate::math::average::{AverageBuffer, AvgBuffer};
 use crate::modeling::modeler::Modeler;
 use crate::rendering::raytrace::{GpuMat3, GpuTransform, GpuVec3, PrecomputedDirections, RaytraceChunk, Raytracer};
+use crate::rendering::reticle::Reticle;
 use crate::rendering::skybox::{Skybox, SkyboxTexturePaths};
 use crate::rendering::texture_array::TextureArrayBindGroup;
 use crate::voxel::vertex::Vertex;
@@ -114,6 +116,9 @@ pub struct State<'a> {
     // pub depth_texture_view: wgpu::TextureView,
     // pub glyphon_pipeline: wgpu::RenderPipeline,
     pub raytracer: Raytracer,
+    pub raytrace_timer: AverageBuffer<Duration>,
+    pub reticle: Reticle,
+    pub ortho: glam::Mat4,
 }
 
 impl<'a> State<'a> {
@@ -236,12 +241,12 @@ impl<'a> State<'a> {
                 back: skybox_dir.join("purp_back.png"),
             }
         ).expect("Failed to load skybox.");
-
+        
         // Camera
         let camera = Camera::from_look_to(
-            Vec3::new(0.0, 1.7, 0.0),
-            Vec3::NEG_Z,
-            45f32.to_radians(),
+            Vec3::new(0.0, 16.0, 0.0),
+            vec3(-1.0, 0.0, 1.0).normalize(),
+            60f32.to_radians(),
             0.01,
             50000.0,
             size,
@@ -413,14 +418,41 @@ impl<'a> State<'a> {
         //     )
         // };
         let mut chunk = RaytraceChunk::new();
-        for i in 0..32 {
-            for z in 0+i..64-i {
-                for x in 0+i..64-i {
-                    chunk.set(x, i, z, 1);
+        // for i in 0..16 {
+        //     for z in 0+i..64-i {
+        //         for x in 0+i..64-i {
+        //             chunk.set(x, i, z, 1);
+        //         }
+        //     }
+        // }
+        // for y in 16..32 {
+        //     for z in 30..34 {
+        //         for x in 30..34 {
+        //             chunk.set(x, y, z, 1);
+        //         }
+        //     }
+        // }
+        for z in 0..64 {
+            for x in 0..64 {
+                chunk.set(x, 0, z, 1);
+            }
+        }
+        let sy = 1;
+        for z in 0..4 {
+            for x in 0..4 {
+                for y in sy..sy+16 {
+                    chunk.set(x, y, z, 1);
                 }
             }
         }
         let mut raytracer = Raytracer::new(&camera, Some(chunk), &device, &queue);
+        let raytrace_timer = AverageBuffer::<Duration>::new(1000, None);
+        let reticle = match Reticle::new(&device, &queue, "assets/textures/reticles/crosshair118.png", &config) {
+            Ok(reticle) => reticle,
+            Err(err) => panic!("Error Creating Reticle: {err}"),
+        };
+
+        let ortho = glam::Mat4::orthographic_rh(0.0, size.width as f32, size.height as f32, 0.0, 0.0, 100.0);
 
         // return
         Self {
@@ -443,15 +475,18 @@ impl<'a> State<'a> {
             input: Input::default(),
             gamepad: Gilrs::new().expect("Failed to create gamepad."),
             settings: Settings {
-                mouse_smoothing: true,
-                mouse_halting: true,
+                mouse_smoothing: false,
+                mouse_halting: false,
             },
             text_rend,
-            locked: true,
+            locked: false,
             animation: None,
             // depth_stencil,
             // depth_texture_view,
             raytracer,
+            raytrace_timer,
+            reticle,
+            ortho,
         }
     }
 
@@ -474,6 +509,9 @@ impl<'a> State<'a> {
             self.surface.configure(&self.device, &self.config);
             // self.camera.aspect_ratio = new_size.width as f32 / new_size.height as f32;
             self.camera.resize(new_size);
+            self.ortho = glam::Mat4::orthographic_rh(0.0, new_size.width as f32, new_size.height as f32, 0.0, 0.0, 100.0);
+            self.reticle.write_dimensions(&self.queue, new_size.width, new_size.height);
+            self.reticle.write_ortho(&self.queue, &self.ortho);
             // self.text_rend.buffer.set_size(&mut self.text_rend.font_system, Some(new_size.width as f32), Some(new_size.height as f32));
         }
     }
@@ -744,15 +782,22 @@ impl<'a> State<'a> {
             println!("{:.5}, {:.5}", ray.dir.length(), ray.invert_dir().dir.length());
         }
 
-        if self.input.mouse_pressed(MouseButton::Left) {
+        if self.input.mouse_just_pressed(MouseButton::Left) {
             // let new_pos = ray.point_on_ray(t);
             // self.camera.position = new_pos;
-            self.camera.position = ray.point_on_ray(t * 0.25);
+            // self.camera.position = ray.point_on_ray(t * 0.25).into();
+            if let Some(hit) = self.raytracer.chunk.raycast(ray, 200.0) {
+                let cell = hit.get_hit_cell();
+                self.raytracer.chunk.set(cell.x, cell.y, cell.z, 1);
+            }
         }
-        if self.input.mouse_pressed(MouseButton::Right) {
+        if self.input.mouse_just_pressed(MouseButton::Right) {
             // let ray = ray.invert_dir();
             // let new_pos = ray.point_on_ray(t);
-            self.camera.position = ray.point_on_ray(t * -0.25);
+            if let Some(hit) = self.raytracer.chunk.raycast(ray, 200.0) {
+                let cell = hit.coord;
+                self.raytracer.chunk.set(cell.x, cell.y, cell.z, 0);
+            }
         }
         // self.texture_array.texel_to_uv(vec2(32.0, 32.0));
         // if self.input.key_just_pressed(KeyCode::KeyC) {
@@ -829,25 +874,27 @@ impl<'a> State<'a> {
 
         const MOUSE_SENSITIVITY: f64 = 0.00075 * 2.5;
 
-        if self.input.mouse_just_pressed(MouseButton::Middle) {
-            self.window.set_cursor_visible(true);
-        }
-        if self.input.mouse_just_released(MouseButton::Middle) {
-            self.window.set_cursor_visible(false);
-        }
+        // if !self.locked && self.input.mouse_just_pressed(MouseButton::Middle) {
+        //     self.window.set_cursor_visible(true);
+        // }
+        // if !self.locked && self.input.mouse_just_released(MouseButton::Middle) {
+        //     self.window.set_cursor_visible(false);
+        // }
 
         if self.input.key_just_pressed(KeyCode::Digit4) {
             println!("{:?}", self.input.mouse_pos.live_mouse.velocity());
         }
-
-        if self.locked && !self.input.mouse_pressed(MouseButton::Middle) {
+        let middle_pressed = self.input.mouse_pressed(MouseButton::Middle);
+        if self.locked || middle_pressed {
             // let rot_y = -(self.input.mouse_pos.live_mouse.velocity().0 * MOUSE_SENSITIVITY);
             // let rot_x = -(self.input.mouse_pos.live_mouse.velocity().1 * MOUSE_SENSITIVITY);
             let rot_y = -(self.input.mouse_pos.delta.x * MOUSE_SENSITIVITY);
             let rot_x = -(self.input.mouse_pos.delta.y * MOUSE_SENSITIVITY);
             
             self.camera.rotate(vec2(rot_x as f32, rot_y as f32));
-            self.window.set_cursor_position(self.window_center()).unwrap();
+            if !middle_pressed {
+                self.window.set_cursor_position(self.window_center()).unwrap();
+            }
         }
 
         if let Some(mut anim) = self.animation.take() {
@@ -875,6 +922,7 @@ impl<'a> State<'a> {
             GpuMat3::new(self.camera.rotation_matrix()),
             GpuVec3::from_vec3(self.camera.position),
         ), &self.queue);
+        self.raytracer.write_chunk(&self.queue);
 
         self.last_time = std::time::Instant::now();
     }
@@ -893,18 +941,28 @@ impl<'a> State<'a> {
 
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        let raytrace_start = Instant::now();
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("Render Encoder")
+            label: Some("Compute Encoder"),
         });
 
         let mut compute_pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("Render Compute Pass"),
             timestamp_writes: None,
         });
-
+        
         self.raytracer.compute(&mut compute_pass);
-
+        
         drop(compute_pass);
+        
+        self.queue.submit(Some(encoder.finish()));
+        let raytrace_elapsed = raytrace_start.elapsed();
+        self.raytrace_timer.push(raytrace_elapsed);
+
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder")
+        });
 
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
@@ -930,7 +988,7 @@ impl<'a> State<'a> {
             occlusion_query_set: None,
             timestamp_writes: None
         });
-        self.camera.render(&mut render_pass, &self.transforms);
+        // self.camera.render(&mut render_pass, &self.transforms);
 
         // increment
         // decrement
@@ -964,6 +1022,13 @@ impl<'a> State<'a> {
         // }
 
         self.raytracer.render(&mut render_pass);
+
+        let avg_rt_time = self.raytrace_timer.average();
+    
+
+        if self.locked {
+            self.reticle.render(&mut render_pass);
+        }
         
         // ██████████████████
         // █                █
@@ -979,6 +1044,7 @@ impl<'a> State<'a> {
 
             writeln!(render_text, "Frame Index: {}", frame.index);
             writeln!(render_text, "FPS: {:.0}", frame.fps);
+            writeln!(render_text, "Raytrace Time: {avg_rt_time:.3?}");
             if self.settings.mouse_smoothing {
                 writeln!(render_text, "Mouse Smoothing: {}", self.input.mouse_pos.delta_avg.capacity());
                 writeln!(render_text, "Mouse Halting: {}", self.settings.mouse_halting);

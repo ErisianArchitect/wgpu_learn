@@ -135,7 +135,8 @@ impl SkyboxCubemap {
                 },
                 wgpu::Extent3d {
                     width,
-                    height, depth_or_array_layers: 1,
+                    height,
+                    depth_or_array_layers: 1,
                 },
             );
         }

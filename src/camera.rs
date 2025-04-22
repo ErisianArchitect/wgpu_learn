@@ -11,9 +11,15 @@ pub fn rotation_from_look_at(position: Vec3, target: Vec3) -> Vec2 {
 }
 
 pub fn rotation_from_direction(direction: Vec3) -> Vec2 {
-    let yaw = (-direction.x).atan2(-direction.z);
+    let yaw = direction.x.atan2(-direction.z);
     let pitch = direction.y.asin();
     vec2(pitch, yaw)
+    // let yaw = (-direction.x).atan2(-direction.z);
+    // let pitch = direction.y.asin();
+    // vec2(pitch, yaw)
+    // let yaw = (-direction.z).atan2(direction.x);
+    // let pitch = (-direction.y).asin();
+    // vec2(pitch, yaw)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -283,7 +289,7 @@ impl Camera {
 
         let direction = (near_point - far_point).normalize();
 
-        Ray3::new(self.position, direction)
+        Ray3::new(self.position.into(), direction.into())
     }
 
     pub fn render(&self, render_pass: &mut wgpu::RenderPass, transforms: &TransformsBindGroup) {

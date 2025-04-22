@@ -1,5 +1,6 @@
 pub mod transform;
 pub mod ray;
+pub mod average;
 
 #[inline(always)]
 pub const fn morton6(index: u32) -> u32 {
