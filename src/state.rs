@@ -1,4 +1,6 @@
 #![allow(unused)]
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::fmt::Write;
 
@@ -117,6 +119,9 @@ pub struct State<'a> {
     // pub glyphon_pipeline: wgpu::RenderPipeline,
     pub raytracer: Raytracer,
     pub raytrace_timer: AverageBuffer<Duration>,
+    pub rt_query_buffer: wgpu::Buffer,
+    pub rt_query_read_buffer: wgpu::Buffer,
+    pub rt_query_set: wgpu::QuerySet,
     pub reticle: Reticle,
     pub ortho: glam::Mat4,
 }
@@ -148,7 +153,10 @@ impl<'a> State<'a> {
         // Device and Queue
         let (device, queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
-                required_features: wgpu::Features::PUSH_CONSTANTS | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                required_features: wgpu::Features::PUSH_CONSTANTS
+                | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
+                | wgpu::Features::TIMESTAMP_QUERY
+                | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
                 required_limits: limits,
                 label: None,
                 memory_hints: MemoryHints::Performance,
@@ -447,25 +455,46 @@ impl<'a> State<'a> {
         }
         let mut raytracer = Raytracer::new(&device, &queue, &camera, Some(chunk), &Lighting {
             directional: DirectionalLight {
-                color: Vec3::ONE,
+                color: vec3(0.9568627450980393, 0.9137254901960784, 0.6078431372549019),
                 direction: vec3(1.0, -4.0, 2.0).normalize(),
-                intensity: 0.7,
-                shadow: 0.2,
+                intensity: 1.0,
+                evening_intensity: 10.0 / 255.0,
+                shadow: 0.01,
                 active: true,
             },
             ambient: AmbientLight {
                 color: Vec3::ONE,
-                intensity: 0.3,
+                intensity: 0.03,
                 active: true,
             }
         });
-        let raytrace_timer = AverageBuffer::<Duration>::new(1000, None);
+        let raytrace_timer = AverageBuffer::<Duration>::new(100, None);
         let reticle = match Reticle::new(&device, &queue, "assets/textures/reticles/crosshair118.png", &config) {
             Ok(reticle) => reticle,
             Err(err) => panic!("Error Creating Reticle: {err}"),
         };
 
         let ortho = glam::Mat4::orthographic_rh(0.0, size.width as f32, size.height as f32, 0.0, 0.0, 100.0);
+
+        let rt_query_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Raytrace Timestamp Buffer"),
+            size: 16,
+            mapped_at_creation: false,
+            usage:  wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+        });
+
+        let rt_query_read_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Raytrace Timestamp Read Buffer"),
+            size: 16,
+            mapped_at_creation: false,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        });
+
+        let rt_query_set = device.create_query_set(&wgpu::QuerySetDescriptor {
+            label: Some("Raytrace Query Set"),
+            count: 2,
+            ty: wgpu::QueryType::Timestamp,
+        });
 
         // return
         Self {
@@ -498,6 +527,9 @@ impl<'a> State<'a> {
             // depth_texture_view,
             raytracer,
             raytrace_timer,
+            rt_query_buffer,
+            rt_query_read_buffer,
+            rt_query_set,
             reticle,
             ortho,
         }
@@ -795,7 +827,7 @@ impl<'a> State<'a> {
             println!("{:.5}, {:.5}", ray.dir.length(), ray.invert_dir().dir.length());
         }
 
-        if self.input.key_just_pressed(KeyCode::KeyL) {
+        if self.input.key_pressed(KeyCode::KeyQ) {
             self.raytracer.gpu_lighting.set_directional_direction(&self.queue, ray.dir.into());
         }
 
@@ -959,7 +991,7 @@ impl<'a> State<'a> {
         let output = self.surface.get_current_texture()?;
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
         
-        let raytrace_start = Instant::now();
+        // let raytrace_start = Instant::now();
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Compute Encoder"),
         });
@@ -969,13 +1001,14 @@ impl<'a> State<'a> {
             timestamp_writes: None,
         });
         
-        self.raytracer.compute(&mut compute_pass);
+        self.raytracer.compute(&mut compute_pass, Some(&self.rt_query_set));
         
         drop(compute_pass);
-        
+        encoder.resolve_query_set(&self.rt_query_set, 0..2, &self.rt_query_buffer, 0);
+        encoder.copy_buffer_to_buffer(&self.rt_query_buffer, 0, &self.rt_query_read_buffer, 0, 16);
         self.queue.submit(Some(encoder.finish()));
-        let raytrace_elapsed = raytrace_start.elapsed();
-        self.raytrace_timer.push(raytrace_elapsed);
+        // let raytrace_elapsed = raytrace_start.elapsed();
+        // self.raytrace_timer.push(raytrace_elapsed);
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder")
@@ -1116,8 +1149,31 @@ impl<'a> State<'a> {
         // render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         drop(render_pass);
         self.queue.submit(std::iter::once(encoder.finish()));
-        let time = start_time.elapsed();
         output.present();
+        let rt_ts_slice = self.rt_query_read_buffer.slice(..);
+        let finished = Arc::new(AtomicBool::new(false));
+        let finished_clone = Arc::clone(&finished);
+        rt_ts_slice.map_async(wgpu::MapMode::Read, move |result| {
+            if let Err(e) = result {
+                panic!("Failed to map buffer: {e:?}");
+            } else {
+                finished_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+
+        while !finished.load(std::sync::atomic::Ordering::Relaxed) {
+            self.device.poll(wgpu::Maintain::Wait);
+        }
+        {
+            let rt_ts_data = rt_ts_slice.get_mapped_range();
+            let timestamps: &[u64] = bytemuck::cast_slice(&rt_ts_data);
+            let ticks = timestamps[1] - timestamps[0];
+            let time_ns = ticks as f64 * self.queue.get_timestamp_period() as f64;
+            let rt_compute_time = Duration::from_nanos(time_ns as u64);
+            self.raytrace_timer.push(rt_compute_time);
+        }
+        self.rt_query_read_buffer.unmap();
+        let time = start_time.elapsed();
         Ok(time)
     }
 }

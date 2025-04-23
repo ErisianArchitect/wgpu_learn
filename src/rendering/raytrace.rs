@@ -166,8 +166,8 @@ impl GpuRaytraceCamera {
 pub struct RaytraceCamera {
     pub gpu_cam: GpuRaytraceCamera,
     pub buffer: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
-    pub bind_group_layout: wgpu::BindGroupLayout,
+    // pub bind_group: wgpu::BindGroup,
+    // pub bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl RaytraceCamera {
@@ -178,38 +178,38 @@ impl RaytraceCamera {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             contents: bytemuck::bytes_of(&gpu_cam),
         });
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Raytrace Camera Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                visibility: wgpu::ShaderStages::COMPUTE,
-                count: None,
-            }],
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Raytrace Camera Group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }]
-        });
+        // let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //     label: Some("Raytrace Camera Layout"),
+        //     entries: &[wgpu::BindGroupLayoutEntry {
+        //         binding: 0,
+        //         ty: wgpu::BindingType::Buffer {
+        //             ty: wgpu::BufferBindingType::Uniform,
+        //             has_dynamic_offset: false,
+        //             min_binding_size: None,
+        //         },
+        //         visibility: wgpu::ShaderStages::COMPUTE,
+        //         count: None,
+        //     }],
+        // });
+        // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: Some("Raytrace Camera Group"),
+        //     layout: &bind_group_layout,
+            // entries: &[wgpu::BindGroupEntry {
+            //     binding: 0,
+            //     resource: buffer.as_entire_binding(),
+            // }]
+        // });
         Self {
             gpu_cam,
             buffer,
-            bind_group,
-            bind_group_layout,
+            // bind_group,
+            // bind_group_layout,
         }
     }
 
-    pub fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
-        compute_pass.set_bind_group(index, &self.bind_group, &[]);
-    }
+    // pub fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+    //     compute_pass.set_bind_group(index, &self.bind_group, &[]);
+    // }
 
     pub fn write_transform(&mut self, transform: GpuTransform, queue: &wgpu::Queue) {
         self.gpu_cam.transform = transform;
@@ -1120,8 +1120,8 @@ impl RaytraceChunk {
 
 pub struct GpuRaytraceChunk {
     pub buffer: wgpu::Buffer,
-    pub bind_group_layout: wgpu::BindGroupLayout,
-    pub bind_group: wgpu::BindGroup,
+    // pub bind_group_layout: wgpu::BindGroupLayout,
+    // pub bind_group: wgpu::BindGroup,
 }
 
 impl GpuRaytraceChunk {
@@ -1132,37 +1132,37 @@ impl GpuRaytraceChunk {
             contents: chunk.as_bytes(),
         });
         chunk.needs_write = false;
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Raytrace Chunk Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                visibility: wgpu::ShaderStages::COMPUTE,
-                count: None,
-            }]
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Raytrace Chunk Group"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            }]
-        });
+        // let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //     label: Some("Raytrace Chunk Layout"),
+            // entries: &[wgpu::BindGroupLayoutEntry {
+            //     binding: 0,
+            //     ty: wgpu::BindingType::Buffer {
+            //         ty: wgpu::BufferBindingType::Storage { read_only: true },
+            //         has_dynamic_offset: false,
+            //         min_binding_size: None,
+            //     },
+            //     visibility: wgpu::ShaderStages::COMPUTE,
+            //     count: None,
+            // }]
+        // });
+        // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: Some("Raytrace Chunk Group"),
+        //     layout: &bind_group_layout,
+            // entries: &[wgpu::BindGroupEntry {
+            //     binding: 0,
+            //     resource: buffer.as_entire_binding(),
+            // }]
+        // });
         Self {
             buffer,
-            bind_group_layout,
-            bind_group,
+            // bind_group_layout,
+            // bind_group,
         }
     }
 
-    pub fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
-        compute_pass.set_bind_group(index, &self.bind_group, &[]);
-    }
+    // pub fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+    //     compute_pass.set_bind_group(index, &self.bind_group, &[]);
+    // }
 
     pub fn write_chunk(&self, chunk: &RaytraceChunk, queue: &wgpu::Queue) {
         queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(chunk.blocks.as_ref()));
@@ -1175,7 +1175,7 @@ pub struct RtDirectionalLight {
     direction: Vec3,
     _pad0: [u8; 4],
     color: Vec3,
-    _pad1: [u8; 4],
+    evening_intensity: f32,
     intensity: f32,
     shadow: f32,
     active: bool,
@@ -1202,14 +1202,15 @@ pub struct RtLighting {
 pub struct GpuRtLighting {
     lighting: RefCell<RtLighting>,
     buffer: wgpu::Buffer,
-    bind_group_layout: wgpu::BindGroupLayout,
-    bind_group: wgpu::BindGroup,
+    // bind_group_layout: wgpu::BindGroupLayout,
+    // bind_group: wgpu::BindGroup,
 }
 
 pub struct DirectionalLight {
     pub direction: Vec3,
     pub color: Vec3,
     pub intensity: f32,
+    pub evening_intensity: f32,
     pub shadow: f32,
     pub active: bool,
 }
@@ -1232,10 +1233,10 @@ impl GpuRtLighting {
                 direction: lighting.directional.direction,
                 color: lighting.directional.color,
                 intensity: lighting.directional.intensity,
+                evening_intensity: lighting.directional.evening_intensity,
                 shadow: lighting.directional.shadow,
                 active: lighting.directional.active,
                 _pad0: padding(),
-                _pad1: padding(),
                 _pad2: padding(),
             },
             ambient: RtAmbientLight {
@@ -1248,42 +1249,42 @@ impl GpuRtLighting {
         };
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("GPU Lighting Buffer"),
-            usage: wgpu::BufferUsages::UNIFORM,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             contents: bytemuck::bytes_of(&rt_light),
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("GPU Lighting Bind Group Layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    count: None,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        min_binding_size: None,
-                        has_dynamic_offset: false,
-                        ty: wgpu::BufferBindingType::Uniform,
-                    }
-                }
-            ]
-        });
+        // let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        //     label: Some("GPU Lighting Bind Group Layout"),
+        //     entries: &[
+        //         wgpu::BindGroupLayoutEntry {
+        //             binding: 0,
+        //             count: None,
+        //             visibility: wgpu::ShaderStages::COMPUTE,
+        //             ty: wgpu::BindingType::Buffer {
+        //                 min_binding_size: None,
+        //                 has_dynamic_offset: false,
+        //                 ty: wgpu::BufferBindingType::Uniform,
+        //             }
+        //         }
+        //     ]
+        // });
 
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("GPU Lighting Bind Group"),
-            layout: &bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                }
-            ]
-        });
+        // let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        //     label: Some("GPU Lighting Bind Group"),
+        //     layout: &bind_group_layout,
+        //     entries: &[
+        //         wgpu::BindGroupEntry {
+        //             binding: 0,
+        //             resource: buffer.as_entire_binding(),
+        //         }
+        //     ]
+        // });
 
         Self {
             lighting: RefCell::new(rt_light),
             buffer,
-            bind_group_layout,
-            bind_group,
+            // bind_group_layout,
+            // bind_group,
         }
 
     }
@@ -1368,9 +1369,9 @@ impl GpuRtLighting {
         self.lighting.borrow().ambient.active
     }
 
-    fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
-        compute_pass.set_bind_group(index, &self.bind_group, &[]);
-    }
+    // fn bind(&self, index: u32, compute_pass: &mut wgpu::ComputePass) {
+    //     compute_pass.set_bind_group(index, &self.bind_group, &[]);
+    // }
 }
 
 pub struct Raytracer {
@@ -1385,6 +1386,8 @@ pub struct Raytracer {
     gpu_precompute: PrecomputedDirections,
     // Lighting
     pub gpu_lighting: GpuRtLighting,
+    data_bind_group_layout: wgpu::BindGroupLayout,
+    data_bind_group: wgpu::BindGroup,
     // Pipelines
     raytrace_pipeline: wgpu::ComputePipeline,
 }
@@ -1399,6 +1402,61 @@ impl Raytracer {
         gpu_camera.write_dimensions(1920, 1080, queue);
         let gpu_precompute = PrecomputedDirections::new(device, camera.fov);
         let gpu_lighting = GpuRtLighting::new(device, lighting);
+
+        let data_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Raytracer Data Bind Group Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    count: None,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        min_binding_size: None,
+                        has_dynamic_offset: false,
+                        ty: wgpu::BufferBindingType::Uniform,
+                    }
+                },
+            ]
+        });
+
+        let data_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Raytracer Data Bind Group"),
+            layout: &data_bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: gpu_camera.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: gpu_chunk.buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: gpu_lighting.buffer.as_entire_binding(),
+                },
+            ]
+        });
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
 
@@ -1418,10 +1476,8 @@ impl Raytracer {
             label: Some("Raytracer Compute Pipeline Layout"),
             bind_group_layouts: &[
                 &result.write_bind_group_layout,
-                &gpu_chunk.bind_group_layout,
-                &gpu_camera.bind_group_layout,
                 &gpu_precompute.read_bind_group_layout,
-                &gpu_lighting.bind_group_layout,
+                &data_bind_group_layout,
             ],
             push_constant_ranges: &[],
         });
@@ -1440,6 +1496,8 @@ impl Raytracer {
             gpu_camera,
             gpu_precompute,
             gpu_lighting,
+            data_bind_group_layout,
+            data_bind_group,
             raytrace_pipeline,
         }
     }
@@ -1456,14 +1514,25 @@ impl Raytracer {
         self.gpu_camera.write_transform(transform, queue);
     }
 
-    pub fn compute(&self, compute_pass: &mut wgpu::ComputePass) {
+    pub fn compute(&self, compute_pass: &mut wgpu::ComputePass, query_set: Option<&wgpu::QuerySet>) {
         compute_pass.set_pipeline(&self.raytrace_pipeline);
         self.result.bind_write(0, compute_pass);
         self.gpu_precompute.bind_read(1, compute_pass);
-        self.gpu_chunk.bind(2, compute_pass);
-        self.gpu_camera.bind(3, compute_pass);
-        self.gpu_lighting.bind(4, compute_pass);
-        compute_pass.dispatch_workgroups(240, 135, 1);
+        compute_pass.set_bind_group(2, &self.data_bind_group, &[]);
+        // self.gpu_chunk.bind(2, compute_pass);
+        // self.gpu_camera.bind(3, compute_pass);
+        // self.gpu_lighting.bind(4, compute_pass);
+        match query_set {
+            Some(query_set) => {
+                compute_pass.write_timestamp(query_set, 0);
+                compute_pass.dispatch_workgroups(240, 135, 1);
+                compute_pass.write_timestamp(query_set, 1);
+            },
+            None => {
+                compute_pass.dispatch_workgroups(240, 135, 1);
+            },
+        }
+        
     }
 
     pub fn render(&self, render_pass: &mut wgpu::RenderPass) {

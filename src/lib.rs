@@ -15,6 +15,7 @@ pub mod voxel_fog;
 pub mod animation;
 pub mod livemouse;
 pub mod gizmo;
+pub mod timing;
 // mod trie;
 
 pub struct FrameInfo {

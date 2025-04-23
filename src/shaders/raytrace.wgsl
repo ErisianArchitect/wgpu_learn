@@ -3,29 +3,33 @@
 
 @group(0) @binding(0) var raycast_result: texture_storage_2d<rgba8unorm, write>;
 @group(1) @binding(0) var directions: texture_storage_2d<rgba32float, read>;
-@group(2) @binding(0) var<storage, read> voxel_chunk: array<u32>;
-@group(3) @binding(0) var<uniform> camera: Camera;
-@group(4) @binding(0) var<uniform> lighting: Lighting;
+@group(2) @binding(0) var<uniform> camera: Camera;
+@group(2) @binding(1) var<storage, read> voxel_chunk: array<u32>;
+@group(2) @binding(2) var<uniform> lighting: Lighting;
 
 // Size: 48
 struct DirectionalLight {
-    direction: vec3<f32>, // 0..12
+    direction: vec3<f32>,   // 0..12
     // 4 bytes padding
-    color: vec3<f32>,     // 16..28
+    _pad0: u32,
+    color: vec3<f32>,       // 16..28
+    evening_intensity: f32, // 28..32
+    intensity: f32,         // 32..36
+    shadow: f32,            // 36..40
+    on: u32,                // 40..44
     // 4 bytes padding
-    intensity: f32,       // 32..36
-    shadow: f32,          // 36..40
-    on: bool,         // 40..44
-    // 4 bytes padding
+    _pad2: u32,
 }
 
 // Size: 32
 struct AmbientLight {
     color: vec3<f32>, // 0..12
     // 4 bytes padding
+    _pad0: u32,
     intensity: f32,           // 16..20
-    on: bool,             // 20..24
+    on: u32,             // 20..24
     // 8 bytes padding
+    _pad1: vec2<u32>,
 }
 
 // Size: 80
@@ -33,6 +37,8 @@ struct Lighting {
     directional: DirectionalLight, //  0..48
     ambient: AmbientLight,         // 48..80
 }
+
+const UP: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
 
 const LIGHTDIR: vec3<f32> = vec3<f32>(1.0, -2.0, 5.0);
 // const LIGHTDIR: vec3<f32> = vec3<f32>(0.0, -1.0, 0.0);
@@ -80,12 +86,14 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
         var face_fract = vec2<f32>(0.0);
         alpha = 1.0;
         var neighbor = hit.coord;
+        var hit_normal = vec3<f32>(0.0);
         switch hit.face {
             case NoFace: {
                 alpha = 0.0;
                 color = vec3<f32>(1.0, 1.0, 1.0);
             }
             case PosX: {
+                hit_normal = vec3<f32>(1.0, 0.0, 0.0);
                 neighbor.x += 1;
                 let neighbor_cell = vec3<f32>(neighbor);
                 hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
@@ -93,6 +101,7 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
                 color = vec3<f32>(1.0, 0.0, 0.0);
             }
             case PosY: {
+                hit_normal = vec3<f32>(0.0, 1.0, 0.0);
                 neighbor.y += 1;
                 let neighbor_cell = vec3<f32>(neighbor);
                 hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
@@ -100,6 +109,7 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
                 color = vec3<f32>(0.0, 1.0, 0.0);
             }
             case PosZ: {
+                hit_normal = vec3<f32>(0.0, 0.0, 1.0);
                 neighbor.z += 1;
                 let neighbor_cell = vec3<f32>(neighbor);
                 hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
@@ -107,6 +117,7 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
                 color = vec3<f32>(0.0, 0.0, 1.0);
             }
             case NegX: {
+                hit_normal = vec3<f32>(-1.0, 0.0, 0.0);
                 neighbor.x -= 1;
                 let neighbor_cell = vec3<f32>(neighbor);
                 hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
@@ -114,6 +125,7 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
                 color = vec3<f32>(1.0, 1.0, 0.0);
             }
             case NegY: {
+                hit_normal = vec3<f32>(0.0, -1.0, 0.0);
                 neighbor.y -= 1;
                 let neighbor_cell = vec3<f32>(neighbor);
                 hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
@@ -121,6 +133,7 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
                 color = vec3<f32>(0.0, 1.0, 1.0);
             }
             case NegZ: {
+                hit_normal = vec3<f32>(0.0, 0.0, -1.0);
                 neighbor.z -= 1;
                 let neighbor_cell = vec3<f32>(neighbor);
                 hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
@@ -129,19 +142,53 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
             }
             default: {}
         }
+        color = vec3<f32>(1.0, 1.0, 1.0);
         let checker = ((hit.coord.x ^ hit.coord.y ^ hit.coord.z) & 1) != 0;
         if checker {
             color *= 0.3;
         }
+        let edge_dist_clamp = clamp(hit.distance, 50.0, 150.0);
+        let edge_scalar = (hit.distance - 50.0) / 100.0;
         if detect_edge(face_fract) {
-            color *= 0.1;
+            color *= mix(0.1, 1.0, edge_scalar);
         }
-        if lighting.directional.on {
-            let light_ray = Ray(hit_point, -lighting.directional.direction);
+        // if bool(lighting.ambient.on) {
+        //     color *= lighting.ambient.color * lighting.ambient.intensity;
+        // }
+        if lighting.directional.on != 0 {
+            let inv_light = -normalize(lighting.directional.direction);
+            let light_ray = Ray(hit_point, inv_light);
             let light_hit = raycast(light_ray, 0.0, 112.0);
-            if light_hit.hit {
-                color *= 0.02;
+            let light_dot = max(0.0, dot(inv_light, hit_normal));
+            let day_dot = max(0.0, dot(inv_light, UP));
+            // let light_dot = dot(inv_light, hit_normal);
+            let directional_intensity = mix(lighting.directional.evening_intensity, lighting.directional.intensity, day_dot);
+            var directional_color = ((lighting.directional.color * directional_intensity));
+            var light: vec3<f32>;
+            if bool(lighting.ambient.on) {
+                // light = mix(ambient, directional_color, light_dot);
+                let ambient = lighting.ambient.color * lighting.ambient.intensity;
+                if light_hit.hit {
+                    light = ambient;
+                } else {
+                    light = mix(ambient, directional_color, light_dot);
+                    // light = ((1.0 - light_dot) * lighting.ambient.intensity) * lighting.ambient.color + directional_color * light_dot;
+                    
+                    // let ambient = mix(ambient_color, shadow_color, day_dot);
+                }
+                // light = ambient + directional_color;
+            } else {
+                if light_hit.hit {
+                    light = vec3<f32>(lighting.directional.shadow);
+                } else {
+                    light = directional_color * light_dot;
+                    light = mix(vec3<f32>(lighting.directional.shadow), light, light_dot);
+                }
             }
+
+            color *= light;
+        } else if bool(lighting.ambient.on) {
+            color *= lighting.ambient.color * lighting.ambient.intensity;
         }
     }
     return vec4<f32>(color, alpha);
