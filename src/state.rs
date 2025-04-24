@@ -83,6 +83,8 @@ impl StateAnimator {
 
 // pub struct Animation
 
+const MOVE_SPEEDS: [f32; 7] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+
 pub struct State<'a> {
     pub surface: wgpu::Surface<'a>,
     pub device: wgpu::Device,
@@ -107,6 +109,7 @@ pub struct State<'a> {
     pub fog: Fog,
     // Camera
     pub camera: Camera,
+    pub move_speed_index: usize,
     // Input State
     pub input: Input,
     pub gamepad: Gilrs,
@@ -426,7 +429,14 @@ impl<'a> State<'a> {
         //     )
         // };
         let mut chunk = RaytraceChunk::new();
-        // for i in 0..16 {
+        for z in 0..64 {
+            for x in 0..64 {
+                for y in 0..64 {
+                    chunk.set(x, y, z, 1);
+                }
+            }
+        }
+        // for i in 1..16 {
         //     for z in 0+i..64-i {
         //         for x in 0+i..64-i {
         //             chunk.set(x, i, z, 1);
@@ -440,31 +450,33 @@ impl<'a> State<'a> {
         //         }
         //     }
         // }
-        for z in 0..64 {
-            for x in 0..64 {
-                chunk.set(x, 0, z, 1);
-            }
-        }
-        let sy = 1;
-        for z in 0..4 {
-            for x in 0..4 {
-                for y in sy..sy+16 {
-                    chunk.set(x, y, z, 1);
-                }
-            }
-        }
+        // TODO: Uncomment this section.
+        // for z in 0..64 {
+        //     for x in 0..64 {
+        //         chunk.set(x, 0, z, 1);
+        //     }
+        // }
+        // let sy = 1;
+        // for z in 0..4 {
+        //     for x in 0..4 {
+        //         for y in sy..sy+16 {
+        //             chunk.set(x, y, z, 1);
+        //         }
+        //     }
+        // }
         let mut raytracer = Raytracer::new(&device, &queue, &camera, Some(chunk), &Lighting {
             directional: DirectionalLight {
-                color: vec3(0.9568627450980393, 0.9137254901960784, 0.6078431372549019),
+                // color: vec3(0.9568627450980393, 0.9137254901960784, 0.6078431372549019),
+                color: vec3(1.0, 1.0, 1.0),
                 direction: vec3(1.0, -4.0, 2.0).normalize(),
                 intensity: 1.0,
                 evening_intensity: 10.0 / 255.0,
-                shadow: 0.01,
+                shadow: 0.2,
                 active: true,
             },
             ambient: AmbientLight {
                 color: Vec3::ONE,
-                intensity: 0.03,
+                intensity: 0.1,
                 active: true,
             }
         });
@@ -510,6 +522,7 @@ impl<'a> State<'a> {
             num_indices: m.indices.len() as u32,
             texture_array,
             camera,
+            move_speed_index: 4,
             transforms,
             fog_bind_group,
             fog,
@@ -659,26 +672,6 @@ impl<'a> State<'a> {
                         _ => (),
                     }
                 }
-                // if !event.repeat && event.state.is_pressed() {
-                //     match event.physical_key {
-                //         PhysicalKey::Code(KeyCode::Digit1) => {
-                //             self.camera.look_at(Vertex::PLANE_VERTICES[0].position);
-                //         },
-                //         PhysicalKey::Code(KeyCode::Digit2) => {
-                //             self.camera.look_at(Vertex::PLANE_VERTICES[1].position);
-                //         },
-                //         PhysicalKey::Code(KeyCode::Digit3) => {
-                //             self.camera.look_at(Vertex::PLANE_VERTICES[2].position);
-                //         },
-                //         PhysicalKey::Code(KeyCode::Digit4) => {
-                //             self.camera.look_at(Vertex::PLANE_VERTICES[3].position);
-                //         },
-                //         PhysicalKey::Code(KeyCode::Digit5) => {
-                //             self.camera.look_at(Vec3::X);
-                //         },
-                //         _=>(),
-                //     }
-                // }
             },
             _=>(),
         }
@@ -722,28 +715,10 @@ impl<'a> State<'a> {
             }
         }
 
-        // let rot = -15f32.to_radians() * t;
-        // self.camera.rotate(vec2(0.0, rot));
-
-        // if self.input.key_just_pressed(KeyCode::Digit1) {
-        //     self.camera.look_at(Vertex::PLANE_VERTICES[0].position);
-        // }
-        // if self.input.key_just_pressed(KeyCode::Digit2) {
-        //     self.camera.look_at(Vertex::PLANE_VERTICES[1].position);
-        // }
-        // if self.input.key_just_pressed(KeyCode::Digit3) {
-        //     self.camera.look_at(Vertex::PLANE_VERTICES[2].position);
-        // }
-        // if self.input.key_just_pressed(KeyCode::Digit4) {
-        //     self.camera.look_at(Vertex::PLANE_VERTICES[3].position);
-        // }
-        // if self.input.key_pressed(KeyCode::Digit5) {
-        //     self.camera.look_at(Vec3::X);
-        // }
-
         let mut total_movement = Vec3::ZERO;
         let mut moved = false;
-
+        let ctrl = self.input.key_pressed(KeyCode::ControlLeft) || self.input.key_pressed(KeyCode::ControlRight);
+        let alt_l = self.input.key_pressed(KeyCode::AltLeft);
         let w = self.input.key_pressed(KeyCode::KeyW);
         let s = self.input.key_pressed(KeyCode::KeyS);
 
@@ -759,10 +734,14 @@ impl<'a> State<'a> {
         let d2 = self.input.key_pressed(KeyCode::Digit2);
         let x = self.input.key_pressed(KeyCode::KeyX);
         
+        let move_speed = MOVE_SPEEDS[self.move_speed_index];
+
         let move_multiplier = if self.input.key_pressed(KeyCode::ShiftLeft) {
-            12.0
+            4.0 * move_speed
+        } else if alt_l {
+            0.25 * move_speed
         } else {
-            4.0
+            MOVE_SPEEDS[self.move_speed_index]
         };
 
         // Forward (Planar)
@@ -770,7 +749,7 @@ impl<'a> State<'a> {
             total_movement += Vec3::NEG_Z;
             moved = true;
             // self.camera.translate_rotated(Vec3::NEG_Z * t);
-        } else if s && !w { // Backward (Planar)
+        } else if s && !w && !ctrl { // Backward (Planar)
             total_movement += Vec3::Z;
             moved = true;
             // self.camera.translate_rotated(Vec3::Z * t);
@@ -848,13 +827,25 @@ impl<'a> State<'a> {
                 self.raytracer.chunk.set(cell.x, cell.y, cell.z, 0);
             }
         }
+        let chunk_path = "./sandbox_files/chunk.dat";
         // self.texture_array.texel_to_uv(vec2(32.0, 32.0));
-        // if self.input.key_just_pressed(KeyCode::KeyC) {
-        //     self.window.set_content_protected(true);
-        // }
-        // if self.input.key_just_pressed(KeyCode::KeyX) {
-        //     self.window.set_content_protected(false);
-        // }
+        if self.input.key_just_pressed(KeyCode::KeyS) && ctrl {
+            self.raytracer.chunk.save(chunk_path).expect("Failed to save chunk.");
+            println!("Saved chunk to file \"{chunk_path}\".");
+        }
+        if self.input.key_just_pressed(KeyCode::KeyL) {
+            let load_start = Instant::now();
+            match self.raytracer.chunk.load(chunk_path) {
+                Ok(()) => {
+                    let load_elapsed = load_start.elapsed();
+                    println!("Loaded chunk from file \"{chunk_path}\" in {load_elapsed:.2?}");
+                }
+                Err(err) => {
+                    eprintln!("Failed to load file: \"{chunk_path}\"");
+                    eprintln!("Error: {err:?}");
+                }
+            }
+        }
 
         if self.input.key_just_pressed(KeyCode::Tab) {
             self.locked = !self.locked;
@@ -870,21 +861,25 @@ impl<'a> State<'a> {
         }
 
         if self.input.key_just_pressed(KeyCode::ArrowRight) {
-            let start = self.camera.position;
-            let mut end = self.camera.position + self.camera.right() * 4.0;
-            self.animation.replace(StateAnimator::start(Duration::from_secs(1), move |state, anim| {
-                use crate::animation::tween;
-                let pos = start.lerp(end, tween::f32::quartic_in_out(anim.alpha_f32()));
-                state.camera.position = pos;
-            }));
+            // self.move_speed_index = (self.move_speed_index + 1) % MOVE_SPEEDS.len();
+            self.move_speed_index = (self.move_speed_index + 1).min(MOVE_SPEEDS.len() - 1);
+            // let start = self.camera.position;
+            // let mut end = self.camera.position + self.camera.right() * 4.0;
+            // self.animation.replace(StateAnimator::start(Duration::from_secs(1), move |state, anim| {
+            //     use crate::animation::tween;
+            //     let pos = start.lerp(end, tween::f32::quartic_in_out(anim.alpha_f32()));
+            //     state.camera.position = pos;
+            // }));
         } else if self.input.key_just_pressed(KeyCode::ArrowLeft) {
-            let start = self.camera.position;
-            let mut end = self.camera.position + self.camera.left() * 4.0;
-            self.animation.replace(StateAnimator::start(Duration::from_secs(1), move |state, anim| {
-                use crate::animation::tween;
-                let pos = start.lerp(end, tween::f32::quartic_in_out(anim.alpha_f32()));
-                state.camera.position = pos;
-            }));
+            // self.move_speed_index = (self.move_speed_index + MOVE_SPEEDS.len() - 1) % MOVE_SPEEDS.len();
+            self.move_speed_index = self.move_speed_index.saturating_sub(1);
+            // let start = self.camera.position;
+            // let mut end = self.camera.position + self.camera.left() * 4.0;
+            // self.animation.replace(StateAnimator::start(Duration::from_secs(1), move |state, anim| {
+            //     use crate::animation::tween;
+            //     let pos = start.lerp(end, tween::f32::quartic_in_out(anim.alpha_f32()));
+            //     state.camera.position = pos;
+            // }));
         }
 
         if self.input.key_just_pressed(KeyCode::KeyY) {
@@ -1038,7 +1033,6 @@ impl<'a> State<'a> {
             occlusion_query_set: None,
             timestamp_writes: None
         });
-        // self.camera.render(&mut render_pass, &self.transforms);
 
         // increment
         // decrement
@@ -1071,6 +1065,7 @@ impl<'a> State<'a> {
         //     }
         // }
 
+        self.camera.render(&mut render_pass, &self.transforms);
         self.raytracer.render(&mut render_pass);
 
         let avg_rt_time = self.raytrace_timer.average();
@@ -1102,6 +1097,7 @@ impl<'a> State<'a> {
                 writeln!(render_text, "Mouse Smoothing: Off");
             }
             writeln!(render_text, "Animating: {}", self.animation.is_some());
+            writeln!(render_text, "Move Speed: {:.2}", MOVE_SPEEDS[self.move_speed_index]);
 
             self.text_rend.back_buffer.set_text(
                 &mut self.text_rend.font_system,

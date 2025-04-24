@@ -77,121 +77,239 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
     //     u32(fx),
     //     u32(fy),
     // ));
-    let ray = get_ray(texel);
-    let hit = raycast(ray, camera.near, camera.far);
-    var color = vec3<f32>(0.0, 0.0, 0.0);
-    var alpha = 0.0;
-    if hit.hit {
-        var hit_point = ray.pos + ray.dir * hit.distance;
-        var face_fract = vec2<f32>(0.0);
-        alpha = 1.0;
-        var neighbor = hit.coord;
-        var hit_normal = vec3<f32>(0.0);
-        switch hit.face {
-            case NoFace: {
-                alpha = 0.0;
-                color = vec3<f32>(1.0, 1.0, 1.0);
-            }
-            case PosX: {
-                hit_normal = vec3<f32>(1.0, 0.0, 0.0);
-                neighbor.x += 1;
-                let neighbor_cell = vec3<f32>(neighbor);
-                hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
-                face_fract = fract(hit_point.yz);
-                color = vec3<f32>(1.0, 0.0, 0.0);
-            }
-            case PosY: {
-                hit_normal = vec3<f32>(0.0, 1.0, 0.0);
-                neighbor.y += 1;
-                let neighbor_cell = vec3<f32>(neighbor);
-                hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
-                face_fract = fract(hit_point.xz);
-                color = vec3<f32>(0.0, 1.0, 0.0);
-            }
-            case PosZ: {
-                hit_normal = vec3<f32>(0.0, 0.0, 1.0);
-                neighbor.z += 1;
-                let neighbor_cell = vec3<f32>(neighbor);
-                hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
-                face_fract = fract(hit_point.xy);
-                color = vec3<f32>(0.0, 0.0, 1.0);
-            }
-            case NegX: {
-                hit_normal = vec3<f32>(-1.0, 0.0, 0.0);
-                neighbor.x -= 1;
-                let neighbor_cell = vec3<f32>(neighbor);
-                hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
-                face_fract = fract(hit_point.yz);
-                color = vec3<f32>(1.0, 1.0, 0.0);
-            }
-            case NegY: {
-                hit_normal = vec3<f32>(0.0, -1.0, 0.0);
-                neighbor.y -= 1;
-                let neighbor_cell = vec3<f32>(neighbor);
-                hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
-                face_fract = fract(hit_point.xz);
-                color = vec3<f32>(0.0, 1.0, 1.0);
-            }
-            case NegZ: {
-                hit_normal = vec3<f32>(0.0, 0.0, -1.0);
-                neighbor.z -= 1;
-                let neighbor_cell = vec3<f32>(neighbor);
-                hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
-                face_fract = fract(hit_point.xy);
-                color = vec3<f32>(1.0, 0.0, 1.0);
-            }
-            default: {}
+    var ray = get_ray(texel);
+    let coord = vec3<i32>(floor(ray.pos));
+    let id = get_block(coord);
+    let solid_block = id == 0;
+    let transparent_color = vec4<f32>(0.0);
+    if solid_block {
+        let hit = raycast(ray, camera.near, camera.far, true);
+        if hit.hit {
+            var hit_point = ray.pos + ray.dir * hit.distance;
+            return vec4<f32>(calculate_surf_color(hit.coord, hit_point, hit.face, hit.distance), 1.0);
         }
-        color = vec3<f32>(1.0, 1.0, 1.0);
-        let checker = ((hit.coord.x ^ hit.coord.y ^ hit.coord.z) & 1) != 0;
-        if checker {
-            color *= 0.3;
-        }
-        let edge_dist_clamp = clamp(hit.distance, 50.0, 150.0);
-        let edge_scalar = (hit.distance - 50.0) / 100.0;
-        if detect_edge(face_fract) {
-            color *= mix(0.1, 1.0, edge_scalar);
-        }
-        // if bool(lighting.ambient.on) {
-        //     color *= lighting.ambient.color * lighting.ambient.intensity;
-        // }
-        if lighting.directional.on != 0 {
-            let inv_light = -normalize(lighting.directional.direction);
-            let light_ray = Ray(hit_point, inv_light);
-            let light_hit = raycast(light_ray, 0.0, 112.0);
-            let light_dot = max(0.0, dot(inv_light, hit_normal));
-            let day_dot = max(0.0, dot(inv_light, UP));
-            // let light_dot = dot(inv_light, hit_normal);
-            let directional_intensity = mix(lighting.directional.evening_intensity, lighting.directional.intensity, day_dot);
-            var directional_color = ((lighting.directional.color * directional_intensity));
-            var light: vec3<f32>;
-            if bool(lighting.ambient.on) {
-                // light = mix(ambient, directional_color, light_dot);
-                let ambient = lighting.ambient.color * lighting.ambient.intensity;
-                if light_hit.hit {
-                    light = ambient;
-                } else {
-                    light = mix(ambient, directional_color, light_dot);
-                    // light = ((1.0 - light_dot) * lighting.ambient.intensity) * lighting.ambient.color + directional_color * light_dot;
-                    
-                    // let ambient = mix(ambient_color, shadow_color, day_dot);
+    } else {
+        let in_hit = raycast(ray, camera.near, camera.far, false);
+        if in_hit.hit {
+            var hit_point = ray.pos + ray.dir * in_hit.distance;
+            var hit_coord: vec3<i32> = in_hit.coord;
+            let hit_face: u32 = flip_face(in_hit.face);
+            var neighbor: vec3<f32>;
+            switch hit_face {
+                case PosX: {
+                    hit_coord.x -= 1;
+                    let neighbor = vec3<f32>(vec3<i32>(hit_coord.x + 1, hit_coord.y, hit_coord.z));
+                    hit_point = clamp(hit_point, neighbor + SMIDGEN, neighbor + UNSMIDGEN);
                 }
-                // light = ambient + directional_color;
+                case NegX: {
+                    hit_coord.x += 1;
+                    let neighbor = vec3<f32>(vec3<i32>(hit_coord.x - 1, hit_coord.y, hit_coord.z));
+                    hit_point = clamp(hit_point, neighbor + SMIDGEN, neighbor + UNSMIDGEN);
+                }
+                case PosY: {
+                    hit_coord.y -= 1;
+                    let neighbor = vec3<f32>(vec3<i32>(hit_coord.x, hit_coord.y + 1, hit_coord.z));
+                    hit_point = clamp(hit_point, neighbor + SMIDGEN, neighbor + UNSMIDGEN);
+                }
+                case NegY: {
+                    hit_coord.y += 1;
+                    let neighbor = vec3<f32>(vec3<i32>(hit_coord.x, hit_coord.y - 1, hit_coord.z));
+                    hit_point = clamp(hit_point, neighbor + SMIDGEN, neighbor + UNSMIDGEN);
+                }
+                case PosZ: {
+                    hit_coord.z -= 1;
+                    let neighbor = vec3<f32>(vec3<i32>(hit_coord.x, hit_coord.y, hit_coord.z + 1));
+                    hit_point = clamp(hit_point, neighbor + SMIDGEN, neighbor + UNSMIDGEN);
+                }
+                case NegZ: {
+                    hit_coord.z += 1;
+                    let neighbor = vec3<f32>(vec3<i32>(hit_coord.x, hit_coord.y, hit_coord.z - 1));
+                    hit_point = clamp(hit_point, neighbor + SMIDGEN, neighbor + UNSMIDGEN);
+                }
+                default: {
+                    return vec4<f32>(0.0);
+                }
+            }
+            let surf_color = calculate_surf_color(hit_coord, hit_point, hit_face, in_hit.distance);
+            ray.pos = hit_point;
+            let out_hit = raycast(ray, camera.near, camera.far, true);
+            if out_hit.hit {
+                let solid_color = calculate_surf_color(out_hit.coord, ray.pos + ray.dir * out_hit.distance, out_hit.face, out_hit.distance);
+                let result_rgb = mix(solid_color, surf_color, 0.3);
+                return vec4<f32>(result_rgb, 1.0);
             } else {
-                if light_hit.hit {
-                    light = vec3<f32>(lighting.directional.shadow);
-                } else {
-                    light = directional_color * light_dot;
-                    light = mix(vec3<f32>(lighting.directional.shadow), light, light_dot);
-                }
+                return vec4<f32>(surf_color, 0.6);
             }
-
-            color *= light;
-        } else if bool(lighting.ambient.on) {
-            color *= lighting.ambient.color * lighting.ambient.intensity;
         }
     }
-    return vec4<f32>(color, alpha);
+    // if blend_transparent {
+    //     let hit = raycast(ray, camera.near, camera.far, false);
+    //     var color: vec3<f32>;
+    //     switch hit.face {
+    //         case NegX: {
+    //             hit_normal = vec3<f32>(1.0, 0.0, 0.0);
+    //             neighbor.x += 1;
+    //             let neighbor_cell = vec3<f32>(neighbor);
+    //             hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+    //             face_fract = fract(hit_point.yz);
+    //             color = vec3<f32>(1.0, 0.0, 0.0);
+    //         }
+    //         case PosX: {
+    //             hit_normal = vec3<f32>(-1.0, 0.0, 0.0);
+    //             neighbor.x -= 1;
+    //             let neighbor_cell = vec3<f32>(neighbor);
+    //             hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+    //             face_fract = fract(hit_point.yz);
+    //             color = vec3<f32>(1.0, 1.0, 0.0);
+    //         }
+    //         case NegY: {
+    //             hit_normal = vec3<f32>(0.0, 1.0, 0.0);
+    //             neighbor.y += 1;
+    //             let neighbor_cell = vec3<f32>(neighbor);
+    //             hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+    //             face_fract = fract(hit_point.xz);
+    //             color = vec3<f32>(0.0, 1.0, 0.0);
+    //         }
+    //         case PosY: {
+    //             hit_normal = vec3<f32>(0.0, -1.0, 0.0);
+    //             neighbor.y -= 1;
+    //             let neighbor_cell = vec3<f32>(neighbor);
+    //             hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+    //             face_fract = fract(hit_point.xz);
+    //             color = vec3<f32>(0.0, 1.0, 1.0);
+    //         }
+    //         case NegZ: {
+    //             hit_normal = vec3<f32>(0.0, 0.0, 1.0);
+    //             neighbor.z += 1;
+    //             let neighbor_cell = vec3<f32>(neighbor);
+    //             hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+    //             face_fract = fract(hit_point.xy);
+    //             color = vec3<f32>(0.0, 0.0, 1.0);
+    //         }
+    //         case PosZ: {
+    //             hit_normal = vec3<f32>(0.0, 0.0, -1.0);
+    //             neighbor.z -= 1;
+    //             let neighbor_cell = vec3<f32>(neighbor);
+    //             hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+    //             face_fract = fract(hit_point.xy);
+    //             color = vec3<f32>(1.0, 0.0, 1.0);
+    //         }
+    //         case NoFace: {
+    //             alpha = 0.0;
+    //             color = vec3<f32>(1.0, 1.0, 1.0);
+    //         }
+    //         default: {}
+    //     }
+    //     if hit.hit {
+    //         ray.pos = ray.pos + ray.dir * hit.distance;
+    //     }
+    // }
+    return vec4<f32>(0.0);
+}
+
+fn calculate_surf_color(
+    coord: vec3<i32>,
+    point: vec3<f32>,
+    face: u32,
+    hit_distance: f32,
+) -> vec3<f32> {
+    var color = vec3<f32>(0.0);
+    var hit_normal = vec3<f32>(0.0);
+    var neighbor = coord;
+    var hit_point = point;
+    var face_fract = vec2<f32>(0.0);
+    switch face {
+        case PosX: {
+            hit_normal = vec3<f32>(1.0, 0.0, 0.0);
+            neighbor.x += 1;
+            let neighbor_cell = vec3<f32>(neighbor);
+            hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+            face_fract = fract(hit_point.yz);
+            color = vec3<f32>(1.0, 0.0, 0.0);
+        }
+        case NegX: {
+            hit_normal = vec3<f32>(-1.0, 0.0, 0.0);
+            neighbor.x -= 1;
+            let neighbor_cell = vec3<f32>(neighbor);
+            hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+            face_fract = fract(hit_point.yz);
+            color = vec3<f32>(1.0, 1.0, 0.0);
+        }
+        case PosY: {
+            hit_normal = vec3<f32>(0.0, 1.0, 0.0);
+            neighbor.y += 1;
+            let neighbor_cell = vec3<f32>(neighbor);
+            hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+            face_fract = fract(hit_point.xz);
+            color = vec3<f32>(0.0, 1.0, 0.0);
+        }
+        case NegY: {
+            hit_normal = vec3<f32>(0.0, -1.0, 0.0);
+            neighbor.y -= 1;
+            let neighbor_cell = vec3<f32>(neighbor);
+            hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+            face_fract = fract(hit_point.xz);
+            color = vec3<f32>(0.0, 1.0, 1.0);
+        }
+        case PosZ: {
+            hit_normal = vec3<f32>(0.0, 0.0, 1.0);
+            neighbor.z += 1;
+            let neighbor_cell = vec3<f32>(neighbor);
+            hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+            face_fract = fract(hit_point.xy);
+            color = vec3<f32>(0.0, 0.0, 1.0);
+        }
+        case NegZ: {
+            hit_normal = vec3<f32>(0.0, 0.0, -1.0);
+            neighbor.z -= 1;
+            let neighbor_cell = vec3<f32>(neighbor);
+            hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
+            face_fract = fract(hit_point.xy);
+            color = vec3<f32>(1.0, 0.0, 1.0);
+        }
+        case NoFace: {
+            return vec3<f32>(1.0, 1.0, 1.0);
+        }
+        default: {}
+    }
+    let checker = ((coord.x ^ coord.y ^ coord.z) & 1) != 0;
+    if checker {
+        color *= 0.3;
+    }
+    let edge_dist_clamp = clamp(hit_distance, 50.0, 150.0);
+    let edge_scalar = (hit_distance - 50.0) / 100.0;
+    if detect_edge(face_fract) {
+        color *= mix(0.1, 1.0, edge_scalar);
+    }
+    if lighting.directional.on != 0 {
+        let inv_light = -normalize(lighting.directional.direction);
+        let light_ray = Ray(hit_point, inv_light);
+        let light_hit = raycast(light_ray, 0.0, 112.0, true);
+        let light_dot = max(0.0, dot(inv_light, hit_normal));
+        let day_dot = max(0.0, dot(inv_light, UP));
+        let directional_intensity = mix(lighting.directional.evening_intensity, lighting.directional.intensity, circular_out(day_dot));
+        var directional_color = ((lighting.directional.color * directional_intensity));
+        var light: vec3<f32>;
+        if bool(lighting.ambient.on) {
+            let ambient = lighting.ambient.color * lighting.ambient.intensity;
+            if light_hit.hit {
+                light = ambient;
+            } else {
+                light = mix(ambient, directional_color, circular_out(light_dot));
+            }
+        } else {
+            if light_hit.hit {
+                light = vec3<f32>(lighting.directional.shadow);
+            } else {
+                light = directional_color * light_dot;
+                light = mix(vec3<f32>(lighting.directional.shadow), light, circular_out(light_dot));
+            }
+        }
+        color *= light;
+    } else if bool(lighting.ambient.on) {
+        color *= lighting.ambient.color * lighting.ambient.intensity;
+    }
+    return color;
 }
 
 struct Camera {
@@ -240,19 +358,56 @@ fn rotate_dir(dir: vec3<f32>) -> vec3<f32> {
     return camera.rotation * dir;
 }
 
-const NoFace: u32 = 0;
+const PosX: u32 = 0;
 const NegX: u32 = 1;
-const NegY: u32 = 2;
-const NegZ: u32 = 3;
-const PosX: u32 = 4;
-const PosY: u32 = 5;
-const PosZ: u32 = 6;
+const PosY: u32 = 2;
+const NegY: u32 = 3;
+const PosZ: u32 = 4;
+const NegZ: u32 = 5;
+const NoFace: u32 = 6;
+
+fn flip_face(face: u32) -> u32 {
+    switch face {
+        case NoFace: {
+            return NoFace;
+        }
+        case NegX: {
+            return PosX;
+        }
+        case NegY: {
+            return PosY;
+        }
+        case NegZ: {
+            return PosZ;
+        }
+        case PosX: {
+            return NegX;
+        }
+        case PosY: {
+            return NegY;
+        }
+        case PosZ: {
+            return NegZ;
+        }
+        default: {
+            return NoFace;
+        }
+    }
+}
 
 const MINPOS: f32 = 1.175494351e-38;
 const F32MAX: f32 = 3.4028235e+38;
 const NEGF32MAX: f32 = -F32MAX;
 // The amount to add or remove to ray to either penetrate or not penetrate a voxel.
 const RAY_PENETRATE: f32 = 1e-5;
+
+fn circular_out(t: f32) -> f32 {
+    return sqrt(1.0 - pow(1.0 - t, 2.0));
+}
+
+fn circular_in(t: f32) -> f32 {
+    return 1.0 - sqrt(1.0 - pow(t, 2.0));
+}
 
 fn get_block(coord: vec3<i32>) -> u32 {
     let xyz = coord.x | coord.y | coord.z;
@@ -285,7 +440,7 @@ const IZERO: vec3<i32> = vec3<i32>(0, 0, 0);
 const NEGFACE: vec3<u32> = vec3<u32>(NegX, NegY, NegZ);
 const POSFACE: vec3<u32> = vec3<u32>(PosX, PosY, PosZ);
 
-fn raycast(ray: Ray, near: f32, far: f32) -> RayHit {
+fn raycast(ray: Ray, near: f32, far: f32, solid: bool) -> RayHit {
     // No hit:
     // RayHit(
     //     vec3<i32>(0, 0, 0), // coord
@@ -467,7 +622,7 @@ fn raycast(ray: Ray, near: f32, far: f32) -> RayHit {
 
     var cell = vec3<i32>(floor(pos));
     let hit_id = get_block(cell);
-    if hit_id != 0 {
+    if (hit_id != 0) == solid {
         var hit_face = enter_face;
         // if t_max_add == delta_min.x {
         //     hit_face = face.x;
@@ -514,7 +669,7 @@ fn raycast(ray: Ray, near: f32, far: f32) -> RayHit {
                 }
                 cell.x = cell.x + step.x;
                 let hit_id = get_block(cell);
-                if hit_id != 0 {
+                if (hit_id != 0) == solid {
                     return RayHit(
                         cell,
                         t_max.x,
@@ -536,7 +691,7 @@ fn raycast(ray: Ray, near: f32, far: f32) -> RayHit {
                 }
                 cell.z = cell.z + step.z;
                 let hit_id = get_block(cell);
-                if hit_id != 0 {
+                if (hit_id != 0) == solid {
                     return RayHit(
                         cell,
                         t_max.z,
@@ -560,7 +715,7 @@ fn raycast(ray: Ray, near: f32, far: f32) -> RayHit {
                 }
                 cell.y = cell.y + step.y;
                 let hit_id = get_block(cell);
-                if hit_id != 0 {
+                if (hit_id != 0) == solid {
                     return RayHit(
                         cell,
                         t_max.y,
@@ -582,7 +737,7 @@ fn raycast(ray: Ray, near: f32, far: f32) -> RayHit {
                 }
                 cell.z = cell.z + step.z;
                 let hit_id = get_block(cell);
-                if hit_id != 0 {
+                if (hit_id != 0) == solid {
                     return RayHit(
                         cell,
                         t_max.z,

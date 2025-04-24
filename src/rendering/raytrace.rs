@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, fs::File, io::BufWriter, path::Path};
 
 use glam::*;
 use bytemuck::{NoUninit, Pod, Zeroable};
@@ -842,6 +842,32 @@ impl RaytraceChunk {
 
     fn as_bytes(&self) -> &[u8] {
         bytemuck::cast_slice(self.blocks.as_ref())
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), std::io::Error> {
+        use std::{fs::File, io::{ Write, BufWriter }};
+        let path = path.as_ref();
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        let file = File::create(path)?;
+        let mut buffer = BufWriter::new(file);
+        for i in 0..self.blocks.len() {
+            buffer.write_all(&self.blocks[i].to_be_bytes())?;
+        }
+        Ok(())
+    }
+
+    pub fn load<P: AsRef<Path>>(&mut self, path: P) -> Result<(), std::io::Error> {
+        use std::{fs::File, io::{ Read, BufReader}};
+        let path = path.as_ref();
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+        for i in 0..self.blocks.len() {
+            let mut buf = [0u8; 4];
+            reader.read_exact(&mut buf)?;
+            self.blocks[i] = u32::from_be_bytes(buf);
+        }
+        self.needs_write = true;
+        Ok(())
     }
 
     pub fn raycast(&self, ray: Ray3, max_distance: f32) -> Option<RayHit> {

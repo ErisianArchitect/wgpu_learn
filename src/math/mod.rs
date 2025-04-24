@@ -14,3 +14,10 @@ pub const fn morton6(index: u32) -> u32 {
 pub const fn morton6_3(x: u32, y: u32, z: u32) -> u32 {
     morton6(x) | (morton6(y) << 1) | (morton6(z) << 2)
 }
+
+/*
+hit_coord
+hit_point
+hit_normal
+blend_color
+*/

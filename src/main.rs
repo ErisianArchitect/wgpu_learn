@@ -83,7 +83,7 @@ pub async fn run() {
         // .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)))
         // .with_content_protected(true)
         .build(&event_loop).unwrap();
-    window.set_cursor_visible(false);
+    // window.set_cursor_visible(false);
     {
         let window_size = window.outer_size();
         let screen_size = window.current_monitor().unwrap().size();
