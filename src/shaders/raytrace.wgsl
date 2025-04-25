@@ -135,10 +135,10 @@ fn trace_color(texel: vec2<u32>) -> vec4<f32> {
             let out_hit = raycast(ray, camera.near, camera.far, true);
             if out_hit.hit {
                 let solid_color = calculate_surf_color(out_hit.coord, ray.pos + ray.dir * out_hit.distance, out_hit.face, out_hit.distance);
-                let result_rgb = mix(solid_color, surf_color, 0.3);
+                let result_rgb = mix(solid_color, surf_color, 0.8);
                 return vec4<f32>(result_rgb, 1.0);
             } else {
-                return vec4<f32>(surf_color, 0.6);
+                return vec4<f32>(surf_color, 0.8);
             }
         }
     }
@@ -287,7 +287,8 @@ fn calculate_surf_color(
         let light_hit = raycast(light_ray, 0.0, 112.0, true);
         let light_dot = max(0.0, dot(inv_light, hit_normal));
         let day_dot = max(0.0, dot(inv_light, UP));
-        let directional_intensity = mix(lighting.directional.evening_intensity, lighting.directional.intensity, circular_out(day_dot));
+        // let directional_intensity = mix(lighting.directional.evening_intensity, lighting.directional.intensity, circular_out(day_dot));
+        let directional_intensity = lighting.directional.intensity;
         var directional_color = ((lighting.directional.color * directional_intensity));
         var light: vec3<f32>;
         if bool(lighting.ambient.on) {

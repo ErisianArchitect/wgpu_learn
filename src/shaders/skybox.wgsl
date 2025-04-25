@@ -42,12 +42,61 @@ fn fix_seams(direction: vec3<f32>) -> vec3<f32> {
     return direction / m;
 }
 
+struct U64 {
+    low: u32,
+    high: u32,
+}
+
+fn get_bit(value: U64, index: u32) -> bool {
+    let low = value.low & (1u << index);
+    let high = value.high & (1u << (index ^ 32u));
+    return (low | high) != 0;
+}
+
+fn count_bits_before(value: U64, index: u32) -> u32 {
+    let high_mask = extractBits(value.high, 0u, max(index, 32u) - 32u);
+    let high_count = countOneBits(high_mask);
+    let low_mask = extractBits(value.low, 0u, min(index, 32u));
+    let low_count = countOneBits(low_mask);
+    return low_count + high_count;
+}
+
+fn test_count_bits(value: U64, index: u32, expect: u32) -> bool {
+    if count_bits_before(value, index) == expect {
+        return true;
+    } else {
+        return false;
+    }
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // var dir = fix_seams(in.direction);
     var dir = in.direction;
     // dir.y = dir.y * 5.0;
-    const V: f32 = 1.0 / 1e-18;
+    // const V: f32 = 1.0 / 1e-18;
+    // count_bits_before test.
+    // const U64MAX: U64 = U64(0xffffffffu, 0xffffffffu);
+    // let test0 = test_count_bits(U64MAX, 64, 64);
+    // let test1 = test_count_bits(U64MAX, 63, 63);
+    // let test2 = test_count_bits(U64MAX, 48, 48);
+    // let test3 = test_count_bits(U64MAX, 32, 32);
+    // let test4 = test_count_bits(U64MAX, 31, 31);
+    // let test5 = test_count_bits(U64MAX, 16, 16);
+    // let test6 = test_count_bits(U64MAX, 1, 1);
+    // let test7 = test_count_bits(U64MAX, 0, 0);
+    // if test0
+    // && test1
+    // && test2
+    // && test3
+    // && test4
+    // && test5
+    // && test6
+    // && test7 {
+    //     return vec4<f32>(0.0, 1.0, 0.0, 1.0);
+    // } else {
+    //     return vec4<f32>(1.0, 0.0, 0.0, 1.0);
+    // }
     let far_sample = textureSample(cubemap, cubemap_sampler, dir);
     return far_sample;
 }

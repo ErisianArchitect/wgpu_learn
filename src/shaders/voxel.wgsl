@@ -118,16 +118,24 @@ const NORMAL: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
 const MIN_POS: f32 = 1.175494351e-38;
 const F32MAX: f32 = 3.4028235e+38;
 
-struct U64 {
-    low: u32,
-    high: u32,
-}
+// struct U64 {
+//     low: u32,
+//     high: u32,
+// }
 
-fn get_bit(value: U64, index: u32) -> bool {
-    let low = value.low & (1u << index);
-    let high = value.high & (1u << (index ^ 32u));
-    return (low | high) != 0;
-}
+// fn get_bit(value: U64, index: u32) -> bool {
+//     let low = value.low & (1u << index);
+//     let high = value.high & (1u << (index ^ 32u));
+//     return (low | high) != 0;
+// }
+
+// fn count_bits_before(value: U64, index: u32) -> u32 {
+//     let high_mask = extractBits(value.high, 0, max(index, 32) - 32);
+//     let high_count = countOneBits(high_mask);
+//     let low_mask = extractBits(value.low, 0, min(index, 32))
+//     let low_count = countOneBits(low_mask);
+//     return low_count + high_count;
+// }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
