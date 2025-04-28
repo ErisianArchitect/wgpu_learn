@@ -242,6 +242,15 @@ fn calculate_surf_color(
             hit_point = clamp(hit_point, neighbor_cell + SMIDGEN, neighbor_cell + UNSMIDGEN);
             face_fract = fract(hit_point.xz);
             color = vec3<f32>(0.0, 1.0, 0.0);
+            
+            // const CHANMAX: f32 = 31.0;
+            // const CHANMULT: f32 = 1.0 / CHANMAX;
+            // let checker = ((coord.x ^ coord.y ^ coord.z) & 1) != 0;
+            // if checker {
+            //     color = vec3<f32>(0.0, CHANMULT * 2.0, 0.0);
+            // } else {
+            //     color = vec3<f32>(0.0, CHANMULT * 3.0, 0.0);
+            // }
         }
         case NegY: {
             hit_normal = vec3<f32>(0.0, -1.0, 0.0);
