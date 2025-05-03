@@ -1,3 +1,4 @@
+use glam::*;
 use winit::{dpi::PhysicalPosition, event::MouseButton, keyboard::*};
 use std::collections::{HashMap, VecDeque};
 
@@ -225,5 +226,63 @@ impl Input {
             }
         });
         self.mouse_pos.end_frame();
+    }
+}
+
+pub struct GamepadInput {
+    gilrs: gilrs::Gilrs,
+    left_stick: Vec2,
+    right_stick: Vec2,
+    dpad: Vec2,
+    left_trigger: f32,
+    right_trigger: f32,
+}
+
+impl GamepadInput {
+    pub fn poll(&mut self) {
+        while let Some(event) = self.gilrs.next_event() {
+            match event.event {
+                gilrs::EventType::ButtonPressed(button, code) => {
+
+                },
+                gilrs::EventType::ButtonRepeated(button, code) => {
+
+                },
+                gilrs::EventType::ButtonReleased(button, code) => {
+
+                },
+                gilrs::EventType::ButtonChanged(button, value, _) => {
+
+                },
+                gilrs::EventType::AxisChanged(axis, value, _) => {
+                    match axis {
+                        gilrs::Axis::LeftStickX => self.left_stick.x = value,
+                        gilrs::Axis::LeftStickY => self.left_stick.y = value,
+                        gilrs::Axis::LeftZ => self.left_trigger = value,
+                        gilrs::Axis::RightStickX => self.right_stick.x = value,
+                        gilrs::Axis::RightStickY => self.right_stick.y = value,
+                        gilrs::Axis::RightZ => self.right_trigger = value,
+                        gilrs::Axis::DPadX => self.dpad.x = value,
+                        gilrs::Axis::DPadY => self.dpad.y = value,
+                        gilrs::Axis::Unknown => {},
+                    }
+                },
+                gilrs::EventType::Connected => {
+
+                },
+                gilrs::EventType::Disconnected => {
+
+                },
+                gilrs::EventType::Dropped => {
+
+                },
+                gilrs::EventType::ForceFeedbackEffectCompleted => {
+
+                },
+                _ => {
+
+                },
+            }
+        }
     }
 }
