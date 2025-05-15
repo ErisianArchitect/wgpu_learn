@@ -22,6 +22,7 @@ use crate::rendering::raytrace::{AmbientLight, DirectionalLight, GpuMat3, GpuTra
 use crate::rendering::reticle::Reticle;
 use crate::rendering::skybox::{Skybox, SkyboxTexturePaths};
 use crate::rendering::texture_array::TextureArrayBindGroup;
+use crate::rendering::velvet::Velvet;
 use crate::voxel::vertex::Vertex;
 use crate::rendering::{
     texture_array::TextureArray,
@@ -127,6 +128,8 @@ pub struct State<'a> {
     pub rt_query_set: wgpu::QuerySet,
     pub reticle: Reticle,
     pub ortho: glam::Mat4,
+    // vello
+    pub velvet: Velvet,
 }
 
 impl<'a> State<'a> {
@@ -508,6 +511,8 @@ impl<'a> State<'a> {
             ty: wgpu::QueryType::Timestamp,
         });
 
+        let velvet = Velvet::new(&device);
+
         // return
         Self {
             window,
@@ -545,6 +550,7 @@ impl<'a> State<'a> {
             rt_query_set,
             reticle,
             ortho,
+            velvet,
         }
     }
 
@@ -1009,6 +1015,35 @@ impl<'a> State<'a> {
             label: Some("Render Encoder")
         });
 
+        let mut clear_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Render Clear Pass"),
+            color_attachments: &[
+                Some(wgpu::RenderPassColorAttachment {
+                    view: &self.velvet.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.0, g: 0.0, b: 0.0, a: 0.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    }
+                })
+            ],
+            ..Default::default()
+        });
+
+        drop(clear_pass);
+
+        self.velvet.draw(&self.device, &self.queue, |scene| {
+            scene.fill(
+                vello::peniko::Fill::NonZero,
+                vello::kurbo::Affine::IDENTITY,
+                vello::peniko::BrushRef::Solid(vello::peniko::Color::WHITE),
+                None,
+                &vello::kurbo::Circle::new((10.0, 10.0), 64.0),
+            );
+        });
+
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1143,6 +1178,9 @@ impl<'a> State<'a> {
         // render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         // render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
         // render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+
+        self.velvet.render(&mut render_pass);
+
         drop(render_pass);
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
